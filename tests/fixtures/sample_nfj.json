@@ -1,0 +1,27 @@
+{
+  "postings": [
+    {
+      "id": "nfj-python-dev-123",
+      "title": "Senior Python Backend Developer",
+      "name": "DataFlow Tech",
+      "url": "senior-python-backend-developer-dataflow-tech",
+      "posted": 1732100000000,
+      "location": {
+        "fullyRemote": true,
+        "places": [
+          {"city": "Kraków"}
+        ]
+      },
+      "salary": {
+        "from": 24000,
+        "to": 30000,
+        "currency": "PLN",
+        "type": "b2b"
+      },
+      "technology": "Python",
+      "tiles": {
+        "values": ["Python", "Docker", "AWS"]
+      }
+    }
+  ]
+}

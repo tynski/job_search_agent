@@ -1,0 +1,25 @@
+[
+  {
+    "slug": "acme-corp-python-data-engineer-warszawa",
+    "title": "Python Data Engineer",
+    "companyName": "Acme Corp",
+    "city": "Warszawa",
+    "workplaceType": "remote",
+    "employmentTypes": [
+      {
+        "type": "b2b",
+        "from": 22000.0,
+        "to": 28000.0,
+        "currency": "PLN"
+      }
+    ],
+    "requiredSkills": [
+      {"name": "Python"},
+      {"name": "SQL"}
+    ],
+    "niceToHaveSkills": [
+      {"name": "Azure"}
+    ],
+    "publishedAt": "2026-11-20T12:00:00.000Z"
+  }
+]
