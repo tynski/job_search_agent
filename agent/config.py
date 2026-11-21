@@ -6,6 +6,7 @@ import yaml
 
 DEFAULT_CONFIG_PATH = Path("config.yaml")
 DEFAULT_PROFILE_PATH = Path("data/profile.yaml")
+DEFAULT_RESUME_PATH = Path("data/resume.md")
 
 
 def load_yaml(path: Path | str) -> dict[str, Any]:
@@ -15,6 +16,13 @@ def load_yaml(path: Path | str) -> dict[str, Any]:
     with open(file_path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f)
         return data or {}
+
+
+def load_text(path: Path | str) -> str:
+    file_path = Path(path)
+    if not file_path.exists():
+        return ""
+    return file_path.read_text(encoding="utf-8")
 
 
 def extract_keywords_from_profile(profile_data: dict[str, Any]) -> list[str]:
@@ -71,3 +79,17 @@ def load_filter_config(
         "salary": filter_cfg.get("salary", {}),
         "include_keywords": profile_keywords,
     }
+
+
+def load_scoring_config(config_path: Path | str = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
+    """Load scoring configuration with defaults."""
+    config_data = load_yaml(config_path)
+    scoring_cfg = config_data.get("scoring", {})
+    return {
+        "model": scoring_cfg.get("model", "gemini/gemini-2.5-flash"),
+        "temperature": float(scoring_cfg.get("temperature", 0.1)),
+        "max_listings_per_run": int(scoring_cfg.get("max_listings_per_run", 20)),
+        "prompt_version": str(scoring_cfg.get("prompt_version", "v1.0")),
+        "top_n_digest": int(scoring_cfg.get("top_n_digest", 10)),
+    }
+
