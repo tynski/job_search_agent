@@ -1,10 +1,10 @@
 # job_search_agent
 
-Personal agent that finds IT jobs, contracts and clients for me (Bartosz).
+Personal agent that finds IT jobs, contracts and clients for user. 
 MVP, personal use only. Keep it simple.
 
 ## Source of truth
-- data/resume.md is the only source of my profile. Never invent skills or experience.
+- data/resume.md is the only source of profile. Never invent skills or experience.
 - Step 0: extract a structured profile.yaml from resume.md (skills with years, roles,
   domains, certifications, languages, seniority, achievements). I review it by hand.
 - Search keywords and titles are generated from profile.yaml.
@@ -14,7 +14,6 @@ MVP, personal use only. Keep it simple.
 - Roles: AI / Solutions Engineer, data engineering, Python, cloud (Azure/AWS).
 - Work types: employment, B2B contracts, freelance, direct clients.
 - Location: Poland or remote (EU).
-- No LinkedIn.
 
 ## Stack
 Python 3.12, SQLite, requests, feedparser, LiteLLM (provider-neutral), PyYAML, pytest.
