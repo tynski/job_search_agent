@@ -251,3 +251,82 @@ def test_digest_ranking_order(tmp_path: Path):
     table_text = format_digest_table(top)
     assert "Job High" in table_text
     assert "9.5" in table_text
+
+
+@patch("litellm.completion")
+def test_score_listing_no_temperature_when_unconfigured(mock_completion):
+    mock_completion.return_value = make_mock_response("""{
+        "score": 8.0,
+        "skills_match": 8.0,
+        "experience_fit": 8.0,
+        "role_fit": 8.0,
+        "gaps": [],
+        "reason": "Good."
+    }""")
+
+    listing = Listing(
+        id="test-no-temp",
+        source="test",
+        title="Python Dev",
+        company="A",
+        location="Remote",
+        remote=True,
+        work_type="b2b",
+        salary=None,
+        description="Python",
+        url="",
+        posted_at="",
+    )
+
+    score_listing(
+        listing=listing,
+        resume_text="Resume",
+        profile_yaml_text="Profile",
+        model="gemini/gemini-3.8-flash",
+        temperature=None,
+    )
+
+    assert mock_completion.call_count == 1
+    call_kwargs = mock_completion.call_args.kwargs
+    assert "temperature" not in call_kwargs
+    assert call_kwargs.get("drop_params") is True
+
+
+@patch("litellm.completion")
+def test_score_listing_passes_temperature_when_set(mock_completion):
+    mock_completion.return_value = make_mock_response("""{
+        "score": 8.0,
+        "skills_match": 8.0,
+        "experience_fit": 8.0,
+        "role_fit": 8.0,
+        "gaps": [],
+        "reason": "Good."
+    }""")
+
+    listing = Listing(
+        id="test-with-temp",
+        source="test",
+        title="Python Dev",
+        company="A",
+        location="Remote",
+        remote=True,
+        work_type="b2b",
+        salary=None,
+        description="Python",
+        url="",
+        posted_at="",
+    )
+
+    score_listing(
+        listing=listing,
+        resume_text="Resume",
+        profile_yaml_text="Profile",
+        model="gemini/gemini-3.8-flash",
+        temperature=0.3,
+    )
+
+    assert mock_completion.call_count == 1
+    call_kwargs = mock_completion.call_args.kwargs
+    assert call_kwargs.get("temperature") == 0.3
+    assert call_kwargs.get("drop_params") is True
+

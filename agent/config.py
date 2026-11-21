@@ -85,9 +85,12 @@ def load_scoring_config(config_path: Path | str = DEFAULT_CONFIG_PATH) -> dict[s
     """Load scoring configuration with defaults."""
     config_data = load_yaml(config_path)
     scoring_cfg = config_data.get("scoring", {})
+    temp_raw = scoring_cfg.get("temperature")
+    temperature = float(temp_raw) if temp_raw is not None else None
+
     return {
         "model": scoring_cfg.get("model", "gemini/gemini-2.5-flash"),
-        "temperature": float(scoring_cfg.get("temperature", 0.1)),
+        "temperature": temperature,
         "max_listings_per_run": int(scoring_cfg.get("max_listings_per_run", 20)),
         "prompt_version": str(scoring_cfg.get("prompt_version", "v1.0")),
         "top_n_digest": int(scoring_cfg.get("top_n_digest", 10)),

@@ -110,7 +110,7 @@ def score_listing(
     resume_text: str,
     profile_yaml_text: str,
     model: str,
-    temperature: float = 0.1,
+    temperature: Optional[float] = None,
     prompt_version: str = "v1.0",
 ) -> tuple[dict[str, Any], int, int, float]:
     """
@@ -125,13 +125,17 @@ def score_listing(
     total_completion_tokens = 0
     total_cost = 0.0
 
+    call_kwargs: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "response_format": {"type": "json_object"},
+        "drop_params": True,
+    }
+    if temperature is not None:
+        call_kwargs["temperature"] = temperature
+
     # First attempt
-    resp = litellm.completion(
-        model=model,
-        messages=messages,
-        temperature=temperature,
-        response_format={"type": "json_object"},
-    )
+    resp = litellm.completion(**call_kwargs)
 
     if hasattr(resp, "usage") and resp.usage:
         total_prompt_tokens += getattr(resp.usage, "prompt_tokens", 0) or 0
@@ -159,12 +163,9 @@ def score_listing(
         messages.append({"role": "assistant", "content": raw_text})
         messages.append({"role": "user", "content": retry_msg})
 
-        retry_resp = litellm.completion(
-            model=model,
-            messages=messages,
-            temperature=temperature,
-            response_format={"type": "json_object"},
-        )
+        retry_kwargs = dict(call_kwargs)
+        retry_kwargs["messages"] = messages
+        retry_resp = litellm.completion(**retry_kwargs)
 
         if hasattr(retry_resp, "usage") and retry_resp.usage:
             total_prompt_tokens += getattr(retry_resp.usage, "prompt_tokens", 0) or 0
