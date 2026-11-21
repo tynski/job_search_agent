@@ -18,7 +18,7 @@ def get_db_connection(db_path: Path | str = DEFAULT_DB_PATH) -> sqlite3.Connecti
 
 
 def init_db(db_path: Path | str = DEFAULT_DB_PATH) -> None:
-    """Create listings table if it does not exist."""
+    """Create listings table and ensure rejection_reason column exists."""
     with get_db_connection(db_path) as conn:
         conn.execute(
             """
@@ -35,11 +35,18 @@ def init_db(db_path: Path | str = DEFAULT_DB_PATH) -> None:
                 url TEXT,
                 posted_at TEXT,
                 status TEXT NOT NULL DEFAULT 'new',
+                rejection_reason TEXT,
                 collected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (source, id)
             )
             """
         )
+        # Check if rejection_reason column needs to be added to an existing table
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(listings)")
+        columns = [row["name"] for row in cursor.fetchall()]
+        if "rejection_reason" not in columns:
+            cursor.execute("ALTER TABLE listings ADD COLUMN rejection_reason TEXT")
         conn.commit()
 
 
@@ -87,7 +94,30 @@ def save_listings(
     return inserted, duplicates
 
 
-def count_listings(db_path: Path | str = DEFAULT_DB_PATH, status: Optional[str] = None) -> int:
+def update_listing_status(
+    source: str,
+    id: str,
+    status: str,
+    rejection_reason: Optional[str] = None,
+    db_path: Path | str = DEFAULT_DB_PATH,
+) -> None:
+    """Update status and rejection_reason of a listing."""
+    init_db(db_path)
+    with get_db_connection(db_path) as conn:
+        conn.execute(
+            """
+            UPDATE listings
+            SET status = ?, rejection_reason = ?
+            WHERE source = ? AND id = ?
+            """,
+            (status, rejection_reason, source, id),
+        )
+        conn.commit()
+
+
+def count_listings(
+    db_path: Path | str = DEFAULT_DB_PATH, status: Optional[str] = None
+) -> int:
     """Return total count of listings, optionally filtered by status."""
     init_db(db_path)
     with get_db_connection(db_path) as conn:

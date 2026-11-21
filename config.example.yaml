@@ -1,0 +1,72 @@
+# Example configuration for job_search_agent
+# Copy to config.yaml to customize.
+
+filter:
+  location:
+    allowed_countries_and_cities:
+      - "poland"
+      - "polska"
+      - "pl"
+      - "warszawa"
+      - "warsaw"
+      - "krakow"
+      - "kraków"
+      - "wroclaw"
+      - "wrocław"
+      - "poznan"
+      - "poznań"
+      - "gdansk"
+      - "gdańsk"
+      - "remote"
+      - "zdalnie"
+      - "eu"
+      - "europe"
+      - "europa"
+    allow_any_remote: true
+
+  work_type:
+    allowed:
+      - "b2b"
+      - "employment"
+      - "permanent"
+      - "uop"
+      - "contract"
+      - "freelance"
+    allow_missing: true
+
+  exclude:
+    titles:
+      - "lead"
+      - "principal"
+      - "staff"
+      - "director"
+      - "head of"
+      - "head"
+      - "vp"
+      - "vice president"
+      - "manager"
+      - "sales"
+      - "account executive"
+      - "recruiter"
+      - "frontend"
+      - "front-end"
+      - "react"
+      - "angular"
+      - "vue"
+      - "ios"
+      - "android"
+      - "flutter"
+      - "php"
+      - "ruby"
+      - "wordpress"
+      - ".net"
+      - "c++"
+      - "embedded"
+      - "intern"
+      - "internship"
+      - "staż"
+      - "praktykant"
+    keywords: []
+
+  salary:
+    min_pln: 0
