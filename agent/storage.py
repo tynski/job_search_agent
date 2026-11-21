@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+import shutil
 import sqlite3
 from typing import Any, Optional
 
@@ -46,6 +47,10 @@ def init_db(db_path: Path | str = DEFAULT_DB_PATH) -> None:
                 model TEXT,
                 prompt_version TEXT,
                 scored_at TEXT,
+                scoring_error_text TEXT,
+                scoring_error_type TEXT,
+                scoring_error_at TEXT,
+                scoring_attempts INTEGER NOT NULL DEFAULT 0,
                 collected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (source, id)
             )
@@ -67,11 +72,76 @@ def init_db(db_path: Path | str = DEFAULT_DB_PATH) -> None:
             "model": "TEXT",
             "prompt_version": "TEXT",
             "scored_at": "TEXT",
+            "scoring_error_text": "TEXT",
+            "scoring_error_type": "TEXT",
+            "scoring_error_at": "TEXT",
+            "scoring_attempts": "INTEGER NOT NULL DEFAULT 0",
         }
         for col_name, col_type in new_columns.items():
             if col_name not in existing_cols:
                 cursor.execute(f"ALTER TABLE listings ADD COLUMN {col_name} {col_type}")
         conn.commit()
+
+
+def migrate_bad_scored_listings(db_path: Path | str = DEFAULT_DB_PATH) -> int:
+    """
+    One-off migration: reset to status 'passed' every listing that has status 'scored'
+    but an empty score or a non-empty scoring_error.
+    Backs up the database file first. Returns count of migrated rows.
+    """
+    path = Path(db_path)
+    if not path.exists():
+        return 0
+    init_db(path)
+
+    with get_db_connection(path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT count(*) FROM listings
+            WHERE status = 'scored'
+              AND (
+                  score IS NULL
+                  OR (rejection_reason IS NOT NULL AND rejection_reason LIKE '%scoring_error%')
+                  OR (scoring_error_text IS NOT NULL AND scoring_error_text != '')
+              )
+            """
+        )
+        count = cursor.fetchone()[0]
+
+        if count > 0:
+            bak_path = path.with_suffix(".db.bak")
+            shutil.copy2(path, bak_path)
+
+            cursor.execute(
+                """
+                UPDATE listings
+                SET status = 'passed',
+                    score = NULL,
+                    skills_match = NULL,
+                    experience_fit = NULL,
+                    role_fit = NULL,
+                    gaps = NULL,
+                    reason = NULL,
+                    scored_at = NULL,
+                    scoring_attempts = CASE WHEN scoring_attempts > 0 THEN scoring_attempts ELSE 1 END,
+                    scoring_error_text = COALESCE(scoring_error_text, rejection_reason),
+                    scoring_error_type = COALESCE(scoring_error_type, 'transient'),
+                    scoring_error_at = CURRENT_TIMESTAMP,
+                    rejection_reason = NULL
+                WHERE status = 'scored'
+                  AND (
+                      score IS NULL
+                      OR (rejection_reason IS NOT NULL AND rejection_reason LIKE '%scoring_error%')
+                      OR (scoring_error_text IS NOT NULL AND scoring_error_text != '')
+                  )
+                """
+            )
+            conn.commit()
+            print(f"[Migration] Backed up database to {bak_path}")
+            print(f"[Migration] Reset {count} row(s) with scoring errors from 'scored' to 'passed'.")
+
+        return count
 
 
 def save_listings(
@@ -145,7 +215,10 @@ def save_score(
     score_data: dict[str, Any],
     db_path: Path | str = DEFAULT_DB_PATH,
 ) -> None:
-    """Store LLM score results and mark listing as scored."""
+    """
+    Store valid parsed LLM score and set status to 'scored'.
+    Clears any prior scoring error fields.
+    """
     init_db(db_path)
     gaps_raw = score_data.get("gaps", [])
     gaps_str = json.dumps(gaps_raw) if isinstance(gaps_raw, list) else str(gaps_raw)
@@ -163,7 +236,11 @@ def save_score(
                 reason = ?,
                 model = ?,
                 prompt_version = ?,
-                scored_at = CURRENT_TIMESTAMP
+                scored_at = CURRENT_TIMESTAMP,
+                scoring_error_text = NULL,
+                scoring_error_type = NULL,
+                scoring_error_at = NULL,
+                rejection_reason = NULL
             WHERE source = ? AND id = ?
             """,
             (
@@ -182,22 +259,30 @@ def save_score(
         conn.commit()
 
 
-def save_scoring_error(
+def record_scoring_failure(
     source: str,
     id: str,
-    error_message: str,
+    error_text: str,
+    error_type: str,
     db_path: Path | str = DEFAULT_DB_PATH,
 ) -> None:
-    """Record scoring failure without crashing."""
+    """
+    Record transient scoring failure on listing.
+    Status remains 'passed' and scoring_attempts counter is incremented.
+    """
     init_db(db_path)
     with get_db_connection(db_path) as conn:
         conn.execute(
             """
             UPDATE listings
-            SET rejection_reason = ?
+            SET status = 'passed',
+                scoring_attempts = COALESCE(scoring_attempts, 0) + 1,
+                scoring_error_text = ?,
+                scoring_error_type = ?,
+                scoring_error_at = CURRENT_TIMESTAMP
             WHERE source = ? AND id = ?
             """,
-            (f"scoring_error: {error_message}", source, id),
+            (error_text, error_type, source, id),
         )
         conn.commit()
 
@@ -219,18 +304,23 @@ def count_listings(
 
 def fetch_passed_unscored_listings(
     prompt_version: str,
+    max_attempts: int = 3,
     limit: Optional[int] = None,
     db_path: Path | str = DEFAULT_DB_PATH,
 ) -> list[Listing]:
-    """Fetch listings that passed filtering and need scoring for this prompt version."""
+    """
+    Fetch listings that passed filtering, need scoring for this prompt version,
+    and have not exceeded max_attempts.
+    """
     init_db(db_path)
     query = """
         SELECT * FROM listings
         WHERE status = 'passed'
           AND (score IS NULL OR prompt_version IS NULL OR prompt_version != ?)
+          AND (scoring_attempts IS NULL OR scoring_attempts < ?)
         ORDER BY collected_at DESC
     """
-    params: list[Any] = [prompt_version]
+    params: list[Any] = [prompt_version, max_attempts]
     if limit is not None:
         query += " LIMIT ?"
         params.append(limit)
@@ -255,6 +345,28 @@ def fetch_passed_unscored_listings(
             )
             for row in rows
         ]
+
+
+def count_skipped_max_attempts(
+    prompt_version: str,
+    max_attempts: int = 3,
+    db_path: Path | str = DEFAULT_DB_PATH,
+) -> int:
+    """Return number of passed listings skipped because they exceeded max_attempts."""
+    init_db(db_path)
+    with get_db_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT count(*) FROM listings
+            WHERE status = 'passed'
+              AND (score IS NULL OR prompt_version IS NULL OR prompt_version != ?)
+              AND scoring_attempts >= ?
+            """,
+            (prompt_version, max_attempts),
+        )
+        row = cursor.fetchone()
+        return row[0] if row else 0
 
 
 def fetch_top_scored_listings(

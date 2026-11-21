@@ -79,5 +79,6 @@ scoring:
   num_retries: 3
   retry_backoff: 2.0
   max_listings_per_run: 20
+  max_attempts: 3
   prompt_version: "v1.0"
   top_n_digest: 10

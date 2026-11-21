@@ -95,6 +95,8 @@ def load_scoring_config(config_path: Path | str = DEFAULT_CONFIG_PATH) -> dict[s
     num_retries = int(scoring_cfg.get("num_retries", 3))
     retry_backoff = float(scoring_cfg.get("retry_backoff", 2.0))
 
+    max_attempts = int(scoring_cfg.get("max_attempts", 3))
+
     return {
         "provider": provider,
         "primary_model": primary_model,
@@ -103,6 +105,7 @@ def load_scoring_config(config_path: Path | str = DEFAULT_CONFIG_PATH) -> dict[s
         "local_api_base": local_api_base,
         "num_retries": num_retries,
         "retry_backoff": retry_backoff,
+        "max_attempts": max_attempts,
         "temperature": temperature,
         "max_listings_per_run": int(scoring_cfg.get("max_listings_per_run", 20)),
         "prompt_version": str(scoring_cfg.get("prompt_version", "v1.0")),

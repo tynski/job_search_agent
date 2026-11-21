@@ -12,14 +12,65 @@ from agent.config import load_scoring_config, load_text
 from agent.models import Listing
 from agent.storage import (
     DEFAULT_DB_PATH,
+    count_skipped_max_attempts,
     fetch_passed_unscored_listings,
     init_db,
+    migrate_bad_scored_listings,
+    record_scoring_failure,
     save_score,
-    save_scoring_error,
 )
 
 # Load environment variables (.env)
 load_dotenv()
+
+
+class FatalScoringError(Exception):
+    """Fatal error (authentication, 404, invalid model) that aborts the run immediately."""
+    pass
+
+
+def is_fatal_error(exc: Exception) -> bool:
+    """Check if exception is a fatal config or authentication error."""
+    if isinstance(exc, FatalScoringError):
+        return True
+    if isinstance(exc, (
+        litellm.exceptions.AuthenticationError,
+        litellm.exceptions.NotFoundError,
+        litellm.exceptions.PermissionDeniedError,
+    )):
+        return True
+    status_code = getattr(exc, "status_code", None)
+    if status_code in (401, 403, 404):
+        return True
+    msg = str(exc).lower()
+    if any(k in msg for k in ["missing gemini api key", "missing api key", "invalid api key", "not_found", "is no longer available"]):
+        if not any(trans in msg for trans in ["503", "429", "timeout"]):
+            return True
+    return False
+
+
+def classify_error_type(exc: Exception) -> str:
+    """Classify transient error type."""
+    if isinstance(exc, litellm.exceptions.RateLimitError):
+        return "rate_limit_429"
+    if isinstance(exc, litellm.exceptions.ServiceUnavailableError):
+        return "service_unavailable_503"
+    if isinstance(exc, litellm.exceptions.Timeout):
+        return "timeout"
+    if isinstance(exc, (litellm.exceptions.APIConnectionError, ConnectionError)):
+        return "connection_error"
+    if isinstance(exc, (ValueError, json.JSONDecodeError)):
+        return "invalid_json"
+    msg = str(exc).lower()
+    if "429" in msg:
+        return "rate_limit_429"
+    if "503" in msg:
+        return "service_unavailable_503"
+    if "timeout" in msg:
+        return "timeout"
+    if "json" in msg:
+        return "invalid_json"
+    return "transient_error"
 
 
 def build_scoring_prompt(
@@ -132,7 +183,6 @@ def _invoke_completion_with_validation(
     if temperature is not None:
         call_kwargs["temperature"] = temperature
     if is_local:
-        # Disable thinking mode for local models (e.g. Qwen / Ollama) if supported
         call_kwargs["thinking"] = {"type": "disabled"}
         call_kwargs["extra_body"] = {"thinking": False}
 
@@ -202,6 +252,7 @@ def score_listing(
     """
     Score a single listing.
     Supports running fully local (provider='local') or cloud with fallback to local model.
+    Fatal config/auth errors immediately abort without fallback.
     """
     prompt = build_scoring_prompt(listing, resume_text, profile_yaml_text)
 
@@ -230,6 +281,11 @@ def score_listing(
             prompt_version=prompt_version,
         )
     except Exception as primary_exc:
+        # Fatal errors (404, 401, invalid model) abort immediately without fallback
+        if is_fatal_error(primary_exc):
+            raise FatalScoringError(f"Fatal error on primary model '{model}': {primary_exc}") from primary_exc
+
+        # Transient errors (503, 429, timeout, connection) fall back to local model if available
         if fallback_model and fallback_model != model:
             print(f"\n[Warning] Primary model '{model}' failed ({primary_exc}). Falling back to local model '{fallback_model}'...")
             return _invoke_completion_with_validation(
@@ -255,6 +311,9 @@ def run_scoring(
     print(f"Database: {db_path}")
 
     init_db(db_path)
+    # One-off migration check to fix any previously malformed 'scored' listings
+    migrate_bad_scored_listings(db_path=db_path)
+
     cfg = load_scoring_config(config_path)
     prompt_version = cfg["prompt_version"]
     provider = cfg.get("provider", "cloud")
@@ -263,6 +322,7 @@ def run_scoring(
     local_api_base = cfg.get("local_api_base", "http://localhost:11434")
     num_retries = cfg.get("num_retries", 3)
     retry_backoff = cfg.get("retry_backoff", 2.0)
+    max_attempts = cfg.get("max_attempts", 3)
     temperature = cfg.get("temperature")
     max_batch = limit if limit is not None else cfg["max_listings_per_run"]
 
@@ -271,7 +331,13 @@ def run_scoring(
 
     unscored = fetch_passed_unscored_listings(
         prompt_version=prompt_version,
+        max_attempts=max_attempts,
         limit=max_batch,
+        db_path=db_path,
+    )
+    skipped_max_attempts = count_skipped_max_attempts(
+        prompt_version=prompt_version,
+        max_attempts=max_attempts,
         db_path=db_path,
     )
 
@@ -280,6 +346,8 @@ def run_scoring(
         f"(provider: {provider}, primary: {primary_model}, fallback: {fallback_model}, prompt_version: {prompt_version})."
     )
     if not unscored:
+        if skipped_max_attempts > 0:
+            print(f"Notice: {skipped_max_attempts} listing(s) skipped because they exceeded max attempts ({max_attempts}).")
         print("No passed listings require scoring.")
         return
 
@@ -305,6 +373,7 @@ def run_scoring(
                 retry_backoff=retry_backoff,
                 provider=provider,
             )
+            # Only set status to 'scored' on valid parsed score
             save_score(source=listing.source, id=listing.id, score_data=score_data, db_path=db_path)
             scored_count += 1
             total_prompt_tokens += p_tokens
@@ -312,13 +381,28 @@ def run_scoring(
             total_cost += cost
             print(f"done! (Score: {score_data['score']}/10 via {score_data['model']})")
         except Exception as e:
+            if is_fatal_error(e):
+                print(f"\n[FATAL ERROR] {e}")
+                print("Aborting scoring run immediately. No listing status modified.")
+                raise FatalScoringError(f"Fatal scoring error: {e}") from e
+
+            # Transient error: mark only this listing as failed, keep status 'passed'
             failed_count += 1
-            save_scoring_error(source=listing.source, id=listing.id, error_message=str(e), db_path=db_path)
-            print(f"failed! ({e})")
+            err_type = classify_error_type(e)
+            record_scoring_failure(
+                source=listing.source,
+                id=listing.id,
+                error_text=str(e),
+                error_type=err_type,
+                db_path=db_path,
+            )
+            print(f"failed! ({err_type}: {e}) - listing status remains 'passed'")
 
     print(f"\nScoring Summary:")
     print(f"  Successfully scored: {scored_count}")
-    print(f"  Failed / Skipped:   {failed_count}")
+    print(f"  Transient failures:  {failed_count}")
+    if skipped_max_attempts > 0:
+        print(f"  Skipped (>{max_attempts} failed attempts): {skipped_max_attempts}")
     print(f"  Tokens used:         {total_prompt_tokens + total_completion_tokens} (prompt: {total_prompt_tokens}, completion: {total_completion_tokens})")
     if total_cost > 0.0:
         print(f"  Estimated cost:      ${total_cost:.5f}")
