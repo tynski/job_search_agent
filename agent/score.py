@@ -1,4 +1,4 @@
-"""LLM Scoring module using LiteLLM."""
+"""LLM Scoring module using LiteLLM with fallback and retry resilience."""
 
 import json
 from pathlib import Path
@@ -8,7 +8,7 @@ from typing import Any, Optional
 from dotenv import load_dotenv
 import litellm
 
-from agent.config import load_scoring_config, load_text, load_yaml
+from agent.config import load_scoring_config, load_text
 from agent.models import Listing
 from agent.storage import (
     DEFAULT_DB_PATH,
@@ -72,7 +72,6 @@ Expected JSON format:
 def _parse_and_validate_score_json(raw_text: str) -> dict[str, Any]:
     """Parse raw LLM response text and validate required fields and ranges."""
     cleaned = raw_text.strip()
-    # Strip markdown code blocks if model included them
     if cleaned.startswith("```"):
         cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.MULTILINE)
         cleaned = re.sub(r"\s*```$", "", cleaned, flags=re.MULTILINE)
@@ -105,22 +104,17 @@ def _parse_and_validate_score_json(raw_text: str) -> dict[str, Any]:
     return data
 
 
-def score_listing(
-    listing: Listing,
-    resume_text: str,
-    profile_yaml_text: str,
+def _invoke_completion_with_validation(
     model: str,
+    prompt: str,
     temperature: Optional[float] = None,
+    api_base: Optional[str] = None,
+    num_retries: int = 3,
+    is_local: bool = False,
     prompt_version: str = "v1.0",
 ) -> tuple[dict[str, Any], int, int, float]:
-    """
-    Call LiteLLM to score a single listing.
-    Retries once on invalid JSON.
-    Returns: (score_data, prompt_tokens, completion_tokens, estimated_cost)
-    """
-    prompt = build_scoring_prompt(listing, resume_text, profile_yaml_text)
+    """Execute completion call with exponential retry for 503/429 and 1 retry on malformed JSON."""
     messages = [{"role": "user", "content": prompt}]
-
     total_prompt_tokens = 0
     total_completion_tokens = 0
     total_cost = 0.0
@@ -129,12 +123,20 @@ def score_listing(
         "model": model,
         "messages": messages,
         "response_format": {"type": "json_object"},
+        "num_retries": num_retries,
+        "retry_strategy": "exponential_backoff_retry",
         "drop_params": True,
     }
+    if api_base:
+        call_kwargs["api_base"] = api_base
     if temperature is not None:
         call_kwargs["temperature"] = temperature
+    if is_local:
+        # Disable thinking mode for local models (e.g. Qwen / Ollama) if supported
+        call_kwargs["thinking"] = {"type": "disabled"}
+        call_kwargs["extra_body"] = {"thinking": False}
 
-    # First attempt
+    # Attempt 1
     resp = litellm.completion(**call_kwargs)
 
     if hasattr(resp, "usage") and resp.usage:
@@ -155,7 +157,7 @@ def score_listing(
         score_data["prompt_version"] = prompt_version
         return score_data, total_prompt_tokens, total_completion_tokens, total_cost
     except Exception as first_err:
-        # Retry once with explicit error feedback
+        # Corrective retry for invalid JSON
         retry_msg = (
             f"The previous output was invalid: {first_err}.\n"
             f"Please return ONLY a valid JSON object matching the exact requested schema."
@@ -184,6 +186,64 @@ def score_listing(
         return score_data, total_prompt_tokens, total_completion_tokens, total_cost
 
 
+def score_listing(
+    listing: Listing,
+    resume_text: str,
+    profile_yaml_text: str,
+    model: str,
+    temperature: Optional[float] = None,
+    prompt_version: str = "v1.0",
+    fallback_model: Optional[str] = "ollama/qwen3.5:4b",
+    local_api_base: Optional[str] = "http://localhost:11434",
+    num_retries: int = 3,
+    retry_backoff: float = 2.0,
+    provider: str = "cloud",
+) -> tuple[dict[str, Any], int, int, float]:
+    """
+    Score a single listing.
+    Supports running fully local (provider='local') or cloud with fallback to local model.
+    """
+    prompt = build_scoring_prompt(listing, resume_text, profile_yaml_text)
+
+    # 1. Fully local mode
+    if provider == "local":
+        active_model = fallback_model or model
+        return _invoke_completion_with_validation(
+            model=active_model,
+            prompt=prompt,
+            temperature=temperature,
+            api_base=local_api_base,
+            num_retries=num_retries,
+            is_local=True,
+            prompt_version=prompt_version,
+        )
+
+    # 2. Cloud mode with fallback
+    try:
+        return _invoke_completion_with_validation(
+            model=model,
+            prompt=prompt,
+            temperature=temperature,
+            api_base=None,
+            num_retries=num_retries,
+            is_local=False,
+            prompt_version=prompt_version,
+        )
+    except Exception as primary_exc:
+        if fallback_model and fallback_model != model:
+            print(f"\n[Warning] Primary model '{model}' failed ({primary_exc}). Falling back to local model '{fallback_model}'...")
+            return _invoke_completion_with_validation(
+                model=fallback_model,
+                prompt=prompt,
+                temperature=temperature,
+                api_base=local_api_base,
+                num_retries=num_retries,
+                is_local=True,
+                prompt_version=prompt_version,
+            )
+        raise primary_exc
+
+
 def run_scoring(
     db_path: Path = DEFAULT_DB_PATH,
     limit: Optional[int] = None,
@@ -197,8 +257,13 @@ def run_scoring(
     init_db(db_path)
     cfg = load_scoring_config(config_path)
     prompt_version = cfg["prompt_version"]
-    model = cfg["model"]
-    temperature = cfg["temperature"]
+    provider = cfg.get("provider", "cloud")
+    primary_model = cfg.get("primary_model") or cfg.get("model", "gemini/gemini-2.5-flash")
+    fallback_model = cfg.get("fallback_model", "ollama/qwen3.5:4b")
+    local_api_base = cfg.get("local_api_base", "http://localhost:11434")
+    num_retries = cfg.get("num_retries", 3)
+    retry_backoff = cfg.get("retry_backoff", 2.0)
+    temperature = cfg.get("temperature")
     max_batch = limit if limit is not None else cfg["max_listings_per_run"]
 
     resume_text = load_text(resume_path)
@@ -210,7 +275,10 @@ def run_scoring(
         db_path=db_path,
     )
 
-    print(f"Found {len(unscored)} passed listing(s) to score (model: {model}, prompt_version: {prompt_version}).")
+    print(
+        f"Found {len(unscored)} passed listing(s) to score "
+        f"(provider: {provider}, primary: {primary_model}, fallback: {fallback_model}, prompt_version: {prompt_version})."
+    )
     if not unscored:
         print("No passed listings require scoring.")
         return
@@ -228,16 +296,21 @@ def run_scoring(
                 listing=listing,
                 resume_text=resume_text,
                 profile_yaml_text=profile_yaml_text,
-                model=model,
+                model=primary_model,
                 temperature=temperature,
                 prompt_version=prompt_version,
+                fallback_model=fallback_model,
+                local_api_base=local_api_base,
+                num_retries=num_retries,
+                retry_backoff=retry_backoff,
+                provider=provider,
             )
             save_score(source=listing.source, id=listing.id, score_data=score_data, db_path=db_path)
             scored_count += 1
             total_prompt_tokens += p_tokens
             total_completion_tokens += c_tokens
             total_cost += cost
-            print(f"done! (Score: {score_data['score']}/10)")
+            print(f"done! (Score: {score_data['score']}/10 via {score_data['model']})")
         except Exception as e:
             failed_count += 1
             save_scoring_error(source=listing.source, id=listing.id, error_message=str(e), db_path=db_path)

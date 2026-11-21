@@ -88,8 +88,21 @@ def load_scoring_config(config_path: Path | str = DEFAULT_CONFIG_PATH) -> dict[s
     temp_raw = scoring_cfg.get("temperature")
     temperature = float(temp_raw) if temp_raw is not None else None
 
+    provider = str(scoring_cfg.get("provider", "cloud")).lower()
+    primary_model = scoring_cfg.get("primary_model") or scoring_cfg.get("model", "gemini/gemini-2.5-flash")
+    fallback_model = scoring_cfg.get("fallback_model", "ollama/qwen3.5:4b")
+    local_api_base = scoring_cfg.get("local_api_base", "http://localhost:11434")
+    num_retries = int(scoring_cfg.get("num_retries", 3))
+    retry_backoff = float(scoring_cfg.get("retry_backoff", 2.0))
+
     return {
-        "model": scoring_cfg.get("model", "gemini/gemini-2.5-flash"),
+        "provider": provider,
+        "primary_model": primary_model,
+        "model": primary_model,  # Backwards compatibility
+        "fallback_model": fallback_model,
+        "local_api_base": local_api_base,
+        "num_retries": num_retries,
+        "retry_backoff": retry_backoff,
         "temperature": temperature,
         "max_listings_per_run": int(scoring_cfg.get("max_listings_per_run", 20)),
         "prompt_version": str(scoring_cfg.get("prompt_version", "v1.0")),

@@ -72,7 +72,12 @@ filter:
     min_pln: 0
 
 scoring:
-  model: "gemini/gemini-2.5-flash"
+  provider: "cloud" # "cloud" or "local"
+  primary_model: "gemini/gemini-2.5-flash"
+  fallback_model: "ollama/qwen3.5:4b"
+  local_api_base: "http://localhost:11434"
+  num_retries: 3
+  retry_backoff: 2.0
   max_listings_per_run: 20
   prompt_version: "v1.0"
   top_n_digest: 10

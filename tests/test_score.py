@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+from litellm.exceptions import ServiceUnavailableError
 import pytest
 
 from agent.digest import format_digest_table
@@ -109,6 +110,148 @@ def test_score_listing_success(mock_cost, mock_completion):
     assert c_tokens == 80
     assert cost == 0.00015
     assert mock_completion.call_count == 1
+    call_kwargs = mock_completion.call_args.kwargs
+    assert call_kwargs.get("num_retries") == 3
+    assert call_kwargs.get("retry_strategy") == "exponential_backoff_retry"
+
+
+@patch("litellm.completion")
+def test_score_listing_503_then_success(mock_completion):
+    err_503 = ServiceUnavailableError(
+        message="503 Service Unavailable",
+        model="gemini/gemini-2.5-flash",
+        llm_provider="gemini",
+    )
+    good_resp = make_mock_response("""{
+        "score": 8.5,
+        "skills_match": 8.0,
+        "experience_fit": 9.0,
+        "role_fit": 8.5,
+        "gaps": [],
+        "reason": "Recovered from 503."
+    }""")
+    mock_completion.side_effect = [err_503, good_resp]
+
+    listing = Listing(
+        id="test-503",
+        source="test",
+        title="Data Engineer",
+        company="A",
+        location="Remote",
+        remote=True,
+        work_type="b2b",
+        salary=None,
+        description="Python",
+        url="",
+        posted_at="",
+    )
+
+    # When litellm retries internally or caller retries
+    with patch("agent.score._invoke_completion_with_validation") as mock_invoke:
+        mock_invoke.return_value = ({"score": 8.5, "skills_match": 8, "experience_fit": 9, "role_fit": 8.5, "gaps": [], "reason": "Recovered", "model": "gemini/gemini-2.5-flash", "prompt_version": "v1.0"}, 100, 50, 0.0)
+        score_data, _, _, _ = score_listing(
+            listing=listing,
+            resume_text="Resume",
+            profile_yaml_text="Profile",
+            model="gemini/gemini-2.5-flash",
+        )
+        assert score_data["score"] == 8.5
+
+
+@patch("litellm.completion")
+def test_score_listing_503_then_fallback_to_local_model(mock_completion):
+    err_503 = ServiceUnavailableError(
+        message="503 Service Unavailable",
+        model="gemini/gemini-2.5-flash",
+        llm_provider="gemini",
+    )
+    local_resp = make_mock_response("""{
+        "score": 7.8,
+        "skills_match": 8.0,
+        "experience_fit": 7.5,
+        "role_fit": 8.0,
+        "gaps": ["dbt"],
+        "reason": "Scored via fallback local model."
+    }""")
+    # Call 1 (cloud primary) fails with 503, Call 2 (local fallback) succeeds
+    mock_completion.side_effect = [err_503, local_resp]
+
+    listing = Listing(
+        id="test-fallback",
+        source="justjoin_it",
+        title="Python Engineer",
+        company="LocalCorp",
+        location="Remote",
+        remote=True,
+        work_type="b2b",
+        salary=None,
+        description="Python and SQL",
+        url="https://example.com/fallback",
+        posted_at="",
+    )
+
+    score_data, _, _, _ = score_listing(
+        listing=listing,
+        resume_text="Resume",
+        profile_yaml_text="Profile",
+        model="gemini/gemini-2.5-flash",
+        fallback_model="ollama/qwen3.5:4b",
+        local_api_base="http://localhost:11434",
+    )
+
+    assert mock_completion.call_count == 2
+    # Verify second call used the fallback model and api_base
+    fallback_kwargs = mock_completion.call_args_list[1].kwargs
+    assert fallback_kwargs["model"] == "ollama/qwen3.5:4b"
+    assert fallback_kwargs["api_base"] == "http://localhost:11434"
+    assert fallback_kwargs.get("thinking") == {"type": "disabled"}
+    assert score_data["score"] == 7.8
+    assert score_data["model"] == "ollama/qwen3.5:4b"
+
+
+@patch("litellm.completion")
+def test_score_listing_provider_local_direct(mock_completion):
+    local_resp = make_mock_response("""{
+        "score": 8.2,
+        "skills_match": 8.0,
+        "experience_fit": 8.5,
+        "role_fit": 8.0,
+        "gaps": [],
+        "reason": "Direct local scoring."
+    }""")
+    mock_completion.return_value = local_resp
+
+    listing = Listing(
+        id="test-local-direct",
+        source="test",
+        title="Python Dev",
+        company="A",
+        location="Remote",
+        remote=True,
+        work_type="b2b",
+        salary=None,
+        description="Python",
+        url="",
+        posted_at="",
+    )
+
+    score_data, _, _, _ = score_listing(
+        listing=listing,
+        resume_text="Resume",
+        profile_yaml_text="Profile",
+        model="gemini/gemini-2.5-flash",
+        fallback_model="ollama/qwen3.5:4b",
+        local_api_base="http://localhost:11434",
+        provider="local",
+    )
+
+    # Should only call once, directly using local model and api_base
+    assert mock_completion.call_count == 1
+    call_kwargs = mock_completion.call_args.kwargs
+    assert call_kwargs["model"] == "ollama/qwen3.5:4b"
+    assert call_kwargs["api_base"] == "http://localhost:11434"
+    assert call_kwargs.get("thinking") == {"type": "disabled"}
+    assert score_data["score"] == 8.2
 
 
 @patch("litellm.completion")
@@ -145,6 +288,7 @@ def test_score_listing_retries_on_invalid_json(mock_cost, mock_completion):
         resume_text="Resume",
         profile_yaml_text="Profile",
         model="gemini/gemini-2.5-flash",
+        fallback_model=None,
     )
 
     assert mock_completion.call_count == 2
@@ -154,7 +298,6 @@ def test_score_listing_retries_on_invalid_json(mock_cost, mock_completion):
 
 @patch("litellm.completion")
 def test_scoring_failure_does_not_crash_run(mock_completion, tmp_path: Path):
-    # Always fails
     mock_completion.return_value = make_mock_response("Malformed json forever")
 
     db_file = tmp_path / "test_score_fail.db"
@@ -175,7 +318,6 @@ def test_scoring_failure_does_not_crash_run(mock_completion, tmp_path: Path):
     )
     save_listings([l1], db_path=db_file)
 
-    # Mark as passed
     with patch("agent.storage.DEFAULT_DB_PATH", db_file):
         from agent.storage import update_listing_status
         update_listing_status("test", "fail-1", "passed", db_path=db_file)
@@ -284,6 +426,7 @@ def test_score_listing_no_temperature_when_unconfigured(mock_completion):
         profile_yaml_text="Profile",
         model="gemini/gemini-3.8-flash",
         temperature=None,
+        fallback_model=None,
     )
 
     assert mock_completion.call_count == 1
@@ -323,10 +466,10 @@ def test_score_listing_passes_temperature_when_set(mock_completion):
         profile_yaml_text="Profile",
         model="gemini/gemini-3.8-flash",
         temperature=0.3,
+        fallback_model=None,
     )
 
     assert mock_completion.call_count == 1
     call_kwargs = mock_completion.call_args.kwargs
     assert call_kwargs.get("temperature") == 0.3
     assert call_kwargs.get("drop_params") is True
-
