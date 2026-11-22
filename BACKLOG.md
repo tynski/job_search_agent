@@ -1,8 +1,10 @@
 # Backlog
 
+## Now
+- [ ] Add README.md, describe how to use agent
+
 ## Next
 - [ ] Depth-controlled processing: fresh listings first, older in waves
-- [ ] Add README.md, describe how to use agent 
 - [ ] Compare Gemini vs local Qwen on 20 labeled listings
 
 ## Later
