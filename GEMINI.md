@@ -5,8 +5,6 @@ MVP, personal use only. Keep it simple.
 
 ## Source of truth
 - data/resume.md is the only source of profile. Never invent skills or experience.
-- Step 0: extract a structured profile.yaml from resume.md (skills with years, roles,
-  domains, certifications, languages, seniority, achievements). I review it by hand.
 - Search keywords and titles are generated from profile.yaml.
 - Scoring compares each listing against profile.yaml and the resume text.
 - Backlog is in BACKLOG.md; work only on items in Now unless I say otherwise.
@@ -17,10 +15,11 @@ MVP, personal use only. Keep it simple.
 - Location: Poland or remote (EU).
 
 ## Stack
-Python 3.12, SQLite, requests, feedparser, LiteLLM (provider-neutral), PyYAML, pytest.
+Python 3.14, SQLite, requests, feedparser, LiteLLM (provider-neutral), PyYAML, pytest.
 
 ## Pipeline
-0. Extract profile.yaml from resume.md
+0. Extract a structured profile.yaml from resume.md (skills with years, roles,
+  domains, certifications, languages, seniority, achievements). I review it by hand.
 1. Collect listings (2-3 sources via API/RSS)
 2. Rule-based filter (location, work type, keywords)
 3. LLM scoring 0-10, JSON output: score, skills_match, experience_fit, role_fit,
