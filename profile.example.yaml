@@ -1,0 +1,74 @@
+candidate:
+  name: Jane Doe
+  contact:
+    phone: "+48 500 000 000"
+    email: "jane.doe@example.com"
+    github: "github.com/janedoe"
+  seniority: "Mid-to-Senior"
+  headline: "Solutions Engineer & Python Developer with 4+ years of experience in data engineering, cloud systems, and client delivery."
+targets:
+  roles:
+    - AI Solutions Engineer
+    - Solutions Engineer
+    - Data Engineer
+    - Python Engineer
+    - Cloud Engineer
+  work_types:
+    - B2B
+    - Employment
+    - Freelance
+  locations:
+    - Poland
+    - Remote (EU)
+skills:
+  languages:
+    - name: Python
+      years: 4.0
+    - name: SQL
+      years: 4.0
+    - name: Bash / Shell
+      years: 3.0
+  data_and_ai:
+    - name: ETL pipelines
+      years: 3.5
+    - name: Data modelling & warehousing
+      years: 3.0
+    - name: Machine Learning basics
+      years: 1.0
+  cloud:
+    - name: Azure
+      years: 2.5
+    - name: AWS
+      years: 1.5
+  engineering:
+    - name: REST APIs & Integrations
+      years: 3.5
+    - name: Git & CI/CD
+      years: 4.0
+    - name: Pytest & Unit Testing
+      years: 3.0
+  solutions:
+    - name: Solution design & requirements analysis
+      years: 3.5
+    - name: Technical consulting & stakeholder communication
+      years: 4.0
+domains:
+  - SaaS / Cloud Platforms
+  - Data Analytics
+  - FinTech / HR Tech
+certifications:
+  - name: "Azure Fundamentals (AZ-900)"
+    year: 2023
+education:
+  - degree: "BSc in Computer Science"
+    institution: "Technical University of Warsaw"
+    year: 2020
+spoken_languages:
+  - language: Polish
+    level: Native
+  - language: English
+    level: Professional working proficiency
+key_achievements:
+  - "Built automated ETL ingestion platform handling multi-source partner API feeds."
+  - "Designed customer integrations that reduced client onboarding time by 40%."
+  - "Improved unit test coverage from 30% to 75% on core Python integration services."

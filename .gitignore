@@ -4,6 +4,7 @@ __pycache__/
 .pytest_cache/
 .env
 config.yaml
+profile.yaml
 *.db
 *.bak
 *.swp
