@@ -43,3 +43,4 @@ Later: outreach draft generation for shortlisted items only.
 - Plan first, code after I approve.
 - One pipeline step per session. Show the diff and how to run it.
 - Ask before adding a new dependency.
+- Keep updated README.md file.
