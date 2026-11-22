@@ -11,7 +11,7 @@ from agent.storage import DEFAULT_DB_PATH, fetch_top_scored_listings, init_db
 def format_digest_table(listings: list[dict]) -> str:
     """Format scored listings into a clean, readable ASCII table."""
     if not listings:
-        return "No scored job listings found in database."
+        return "No actionable scored job listings found in database."
 
     lines = []
     lines.append("=" * 110)
@@ -30,16 +30,21 @@ def format_digest_table(listings: list[dict]) -> str:
 
         lines.append(f"{idx:<3} | {score_val:<5} | {title:<30} | {company:<18} | {location:<14} | {work_type:<10}")
 
-        # Sub-row with Reason, Gaps, and URL
+        # Sub-row with Reason, Gaps, Status tag, and URL
         gaps_str = ", ".join(item.get("gaps", [])) or "None"
         if len(gaps_str) > 60:
             gaps_str = gaps_str[:57] + "..."
         reason_str = item.get("reason", "")
-        if len(reason_str) > 90:
-            reason_str = reason_str[:87] + "..."
+        if len(reason_str) > 85:
+            reason_str = reason_str[:82] + "..."
+
+        pipeline_status = item.get("pipeline_status", "new")
+        status_tag = f" [{pipeline_status.upper()}]" if pipeline_status != "new" else ""
 
         lines.append(f"    Gaps:   {gaps_str}")
-        lines.append(f"    Reason: {reason_str}")
+        lines.append(f"    Reason: {reason_str}{status_tag}")
+        if item.get("notes"):
+            lines.append(f"    Notes:  {item['notes']}")
         if item.get("salary"):
             lines.append(f"    Salary: {item['salary']}")
         lines.append(f"    URL:    {item.get('url', '')}")
@@ -54,7 +59,7 @@ def print_digest(top_n: Optional[int] = None, db_path: Path = DEFAULT_DB_PATH) -
     limit = top_n if top_n is not None else cfg.get("top_n_digest", 10)
 
     listings = fetch_top_scored_listings(limit=limit, db_path=db_path)
-    print(f"\n=== Top {len(listings)} IT Job Matches (by LLM Match Score) ===")
+    print(f"\n=== Top {len(listings)} Actionable IT Job Matches (by LLM Match Score) ===")
     print(format_digest_table(listings))
     print()
 

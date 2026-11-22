@@ -5,5 +5,7 @@ __pycache__/
 .env
 config.yaml
 *.db
+*.bak
+*.swp
 data/
 .venv

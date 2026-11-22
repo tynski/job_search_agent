@@ -1,0 +1,149 @@
+"""CLI for personal pipeline status tracking."""
+
+import argparse
+from pathlib import Path
+import sys
+
+from agent.storage import (
+    DEFAULT_DB_PATH,
+    VALID_PIPELINE_STATUSES,
+    fetch_tracked_listings,
+    get_pipeline_stats,
+    init_db,
+    migrate_tracking_columns,
+    set_pipeline_status,
+)
+
+
+def format_listings_table(listings: list[dict]) -> str:
+    """Format tracked listings into a readable ASCII table."""
+    if not listings:
+        return "No listings found matching criteria."
+
+    lines = []
+    lines.append("=" * 115)
+    lines.append(f"{'SCORE':<5} | {'STATUS':<11} | {'ID':<30} | {'TITLE':<25} | {'COMPANY':<18} | {'NOTES'}")
+    lines.append("-" * 115)
+
+    for item in listings:
+        score_val = f"{item['score']:.1f}" if item.get("score") is not None else "N/A"
+        status_val = item.get("pipeline_status", "new").upper()
+        item_id = (item["id"][:28] + "..") if len(item["id"]) > 30 else item["id"]
+        title = (item["title"][:23] + "..") if len(item["title"]) > 25 else item["title"]
+        company = (item["company"][:16] + "..") if len(item["company"]) > 18 else item["company"]
+        notes = (item.get("notes") or "")
+        if len(notes) > 35:
+            notes = notes[:32] + "..."
+
+        lines.append(f"{score_val:<5} | {status_val:<11} | {item_id:<30} | {title:<25} | {company:<18} | {notes}")
+        if item.get("url"):
+            lines.append(f"      URL: {item['url']}")
+        lines.append("-" * 115)
+
+    return "\n".join(lines)
+
+
+def cmd_list(args: argparse.Namespace) -> None:
+    db_path = Path(args.db)
+    init_db(db_path)
+    listings = fetch_tracked_listings(status=args.status, limit=args.limit, db_path=db_path)
+    header_status = f"'{args.status}'" if args.status else "All"
+    print(f"\n=== Tracked Job Listings ({header_status}: {len(listings)}) ===")
+    print(format_listings_table(listings))
+    print()
+
+
+def cmd_set(args: argparse.Namespace) -> None:
+    db_path = Path(args.db)
+    init_db(db_path)
+    listing_id = args.id
+    status = args.status.lower().strip()
+
+    if status not in VALID_PIPELINE_STATUSES:
+        print(f"Error: Invalid status '{status}'. Must be one of: {sorted(VALID_PIPELINE_STATUSES)}")
+        sys.exit(1)
+
+    updated = set_pipeline_status(
+        listing_id=listing_id,
+        status=status,
+        notes=args.note,
+        db_path=db_path,
+    )
+
+    if updated:
+        note_str = f" (note: '{args.note}')" if args.note is not None else ""
+        print(f"Successfully updated listing '{listing_id}' -> status: '{status}'{note_str}")
+    else:
+        print(f"Error: Listing with ID '{listing_id}' not found in database.")
+        sys.exit(1)
+
+
+def cmd_stats(args: argparse.Namespace) -> None:
+    db_path = Path(args.db)
+    init_db(db_path)
+    stats = get_pipeline_stats(db_path=db_path)
+    total = sum(stats.values())
+
+    print("\n=== Personal Pipeline Tracking Stats ===")
+    print(f"{'STATUS':<15} | {'COUNT':<8}")
+    print("-" * 26)
+    for s in ["new", "shortlisted", "applied", "replied", "rejected"]:
+        print(f"{s:<15} | {stats.get(s, 0):<8}")
+    print("-" * 26)
+    print(f"{'Total Listings':<15} | {total:<8}\n")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Personal IT job search pipeline tracking CLI.")
+    parser.add_argument(
+        "--db",
+        type=Path,
+        default=DEFAULT_DB_PATH,
+        help="Path to SQLite database file.",
+    )
+    subparsers = parser.add_subparsers(dest="subcommand", required=True)
+
+    # Subcommand: list
+    list_parser = subparsers.add_parser("list", help="List listings by tracking status.")
+    list_parser.add_argument(
+        "--status",
+        type=str,
+        default=None,
+        choices=sorted(VALID_PIPELINE_STATUSES),
+        help="Filter by pipeline tracking status.",
+    )
+    list_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Maximum listings to display.",
+    )
+    list_parser.set_defaults(func=cmd_list)
+
+    # Subcommand: set
+    set_parser = subparsers.add_parser("set", help="Set pipeline tracking status for a listing.")
+    set_parser.add_argument("id", type=str, help="ID of the listing to update.")
+    set_parser.add_argument(
+        "status",
+        type=str,
+        choices=sorted(VALID_PIPELINE_STATUSES),
+        help=f"Target pipeline status ({', '.join(sorted(VALID_PIPELINE_STATUSES))}).",
+    )
+    set_parser.add_argument(
+        "--note",
+        type=str,
+        default=None,
+        help="Optional note to attach to the listing.",
+    )
+    set_parser.set_defaults(func=cmd_set)
+
+    # Subcommand: stats
+    stats_parser = subparsers.add_parser("stats", help="Display statistics of pipeline tracking statuses.")
+    stats_parser.set_defaults(func=cmd_stats)
+
+    args = parser.parse_args()
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()

@@ -9,6 +9,7 @@ from typing import Any, Optional
 from agent.models import Listing
 
 DEFAULT_DB_PATH = Path("data/jobs.db")
+VALID_PIPELINE_STATUSES = {"new", "shortlisted", "applied", "replied", "rejected"}
 
 
 def get_db_connection(db_path: Path | str = DEFAULT_DB_PATH) -> sqlite3.Connection:
@@ -51,6 +52,9 @@ def init_db(db_path: Path | str = DEFAULT_DB_PATH) -> None:
                 scoring_error_type TEXT,
                 scoring_error_at TEXT,
                 scoring_attempts INTEGER NOT NULL DEFAULT 0,
+                pipeline_status TEXT NOT NULL DEFAULT 'new',
+                status_updated_at TEXT,
+                notes TEXT,
                 collected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (source, id)
             )
@@ -76,6 +80,9 @@ def init_db(db_path: Path | str = DEFAULT_DB_PATH) -> None:
             "scoring_error_type": "TEXT",
             "scoring_error_at": "TEXT",
             "scoring_attempts": "INTEGER NOT NULL DEFAULT 0",
+            "pipeline_status": "TEXT NOT NULL DEFAULT 'new'",
+            "status_updated_at": "TEXT",
+            "notes": "TEXT",
         }
         for col_name, col_type in new_columns.items():
             if col_name not in existing_cols:
@@ -83,11 +90,48 @@ def init_db(db_path: Path | str = DEFAULT_DB_PATH) -> None:
         conn.commit()
 
 
+def migrate_tracking_columns(db_path: Path | str = DEFAULT_DB_PATH) -> int:
+    """
+    Migration: ensure pipeline_status, status_updated_at, notes columns exist,
+    back up database first, and set pipeline_status = 'new' for existing rows.
+    """
+    path = Path(db_path)
+    if not path.exists():
+        return 0
+
+    bak_path = path.with_suffix(".db.bak")
+    shutil.copy2(path, bak_path)
+    print(f"[Migration] Backed up database to {bak_path}")
+
+    with get_db_connection(path) as conn:
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(listings)")
+        existing_cols = {row["name"] for row in cursor.fetchall()}
+        has_tracking = "pipeline_status" in existing_cols
+
+        cursor.execute("SELECT count(*) FROM listings")
+        total_rows = cursor.fetchone()[0]
+
+    init_db(path)
+
+    with get_db_connection(path) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT count(*) FROM listings WHERE pipeline_status IS NULL")
+        null_count = cursor.fetchone()[0]
+        if null_count > 0:
+            cursor.execute("UPDATE listings SET pipeline_status = 'new' WHERE pipeline_status IS NULL")
+            conn.commit()
+
+        migrated = total_rows if not has_tracking else null_count
+        if migrated > 0:
+            print(f"[Migration] Migrated tracking columns on {migrated} row(s).")
+        return migrated
+
+
 def migrate_bad_scored_listings(db_path: Path | str = DEFAULT_DB_PATH) -> int:
     """
-    One-off migration: reset to status 'passed' every listing that has status 'scored'
+    Reset to status 'passed' every listing that has status 'scored'
     but an empty score or a non-empty scoring_error.
-    Backs up the database file first. Returns count of migrated rows.
     """
     path = Path(db_path)
     if not path.exists():
@@ -162,8 +206,8 @@ def save_listings(
                 """
                 INSERT OR IGNORE INTO listings (
                     source, id, title, company, location, remote,
-                    work_type, salary, description, url, posted_at, status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new')
+                    work_type, salary, description, url, posted_at, status, pipeline_status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', 'new')
                 """,
                 (
                     listing.source,
@@ -195,7 +239,7 @@ def update_listing_status(
     rejection_reason: Optional[str] = None,
     db_path: Path | str = DEFAULT_DB_PATH,
 ) -> None:
-    """Update status and rejection_reason of a listing."""
+    """Update technical status and rejection_reason of a listing."""
     init_db(db_path)
     with get_db_connection(db_path) as conn:
         conn.execute(
@@ -207,6 +251,100 @@ def update_listing_status(
             (status, rejection_reason, source, id),
         )
         conn.commit()
+
+
+def set_pipeline_status(
+    listing_id: str,
+    status: str,
+    notes: Optional[str] = None,
+    db_path: Path | str = DEFAULT_DB_PATH,
+) -> bool:
+    """
+    Update personal tracking pipeline_status and optional notes for a listing.
+    Allowed statuses: new, shortlisted, applied, replied, rejected.
+    """
+    status_clean = status.lower().strip()
+    if status_clean not in VALID_PIPELINE_STATUSES:
+        raise ValueError(
+            f"Invalid pipeline status '{status}'. Must be one of: {sorted(VALID_PIPELINE_STATUSES)}"
+        )
+
+    init_db(db_path)
+    with get_db_connection(db_path) as conn:
+        cursor = conn.cursor()
+        if notes is not None:
+            cursor.execute(
+                """
+                UPDATE listings
+                SET pipeline_status = ?,
+                    status_updated_at = CURRENT_TIMESTAMP,
+                    notes = ?
+                WHERE id = ?
+                """,
+                (status_clean, notes, listing_id),
+            )
+        else:
+            cursor.execute(
+                """
+                UPDATE listings
+                SET pipeline_status = ?,
+                    status_updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (status_clean, listing_id),
+            )
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def fetch_tracked_listings(
+    status: Optional[str] = None,
+    limit: Optional[int] = None,
+    db_path: Path | str = DEFAULT_DB_PATH,
+) -> list[dict[str, Any]]:
+    """Fetch listings filtered by personal pipeline_status."""
+    init_db(db_path)
+    query = """
+        SELECT id, source, title, company, location, remote, work_type,
+               salary, url, score, pipeline_status, notes, status_updated_at
+        FROM listings
+    """
+    params: list[Any] = []
+    if status:
+        status_clean = status.lower().strip()
+        if status_clean not in VALID_PIPELINE_STATUSES:
+            raise ValueError(
+                f"Invalid pipeline status '{status}'. Must be one of: {sorted(VALID_PIPELINE_STATUSES)}"
+            )
+        query += " WHERE pipeline_status = ?"
+        params.append(status_clean)
+
+    query += " ORDER BY score DESC, collected_at DESC"
+    if limit is not None:
+        query += " LIMIT ?"
+        params.append(limit)
+
+    with get_db_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(query, tuple(params))
+        rows = cursor.fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_pipeline_stats(db_path: Path | str = DEFAULT_DB_PATH) -> dict[str, int]:
+    """Return count of listings per personal tracking status."""
+    init_db(db_path)
+    stats = {s: 0 for s in ["new", "shortlisted", "applied", "replied", "rejected"]}
+    with get_db_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT pipeline_status, count(*) FROM listings GROUP BY pipeline_status")
+        for row in cursor.fetchall():
+            status_val = row[0]
+            if status_val in stats:
+                stats[status_val] = row[1]
+            elif status_val is None:
+                stats["new"] += row[1]
+    return stats
 
 
 def save_score(
@@ -373,7 +511,10 @@ def fetch_top_scored_listings(
     limit: int = 10,
     db_path: Path | str = DEFAULT_DB_PATH,
 ) -> list[dict[str, Any]]:
-    """Fetch top scored listings ordered by score descending."""
+    """
+    Fetch top scored listings ordered by score descending.
+    Excludes listings with pipeline_status IN ('applied', 'replied', 'rejected').
+    """
     init_db(db_path)
     with get_db_connection(db_path) as conn:
         cursor = conn.cursor()
@@ -381,9 +522,12 @@ def fetch_top_scored_listings(
             """
             SELECT source, id, title, company, location, remote, work_type,
                    salary, url, score, skills_match, experience_fit, role_fit,
-                   gaps, reason, model, prompt_version, scored_at
+                   gaps, reason, model, prompt_version, scored_at,
+                   pipeline_status, notes
             FROM listings
-            WHERE status = 'scored' AND score IS NOT NULL
+            WHERE status = 'scored'
+              AND score IS NOT NULL
+              AND (pipeline_status IS NULL OR pipeline_status NOT IN ('applied', 'replied', 'rejected'))
             ORDER BY score DESC
             LIMIT ?
             """,
@@ -420,6 +564,8 @@ def fetch_top_scored_listings(
                 "model": r["model"] or "",
                 "prompt_version": r["prompt_version"] or "",
                 "scored_at": r["scored_at"] or "",
+                "pipeline_status": r["pipeline_status"] or "new",
+                "notes": r["notes"] or "",
             })
         return results
 

@@ -1,0 +1,301 @@
+"""Tests for Step 4: personal pipeline tracking status."""
+
+from pathlib import Path
+import pytest
+import sqlite3
+
+from agent.models import Listing
+from agent.storage import (
+    count_listings,
+    fetch_top_scored_listings,
+    fetch_tracked_listings,
+    get_db_connection,
+    get_pipeline_stats,
+    init_db,
+    migrate_tracking_columns,
+    save_listings,
+    save_score,
+    set_pipeline_status,
+)
+from agent.digest import format_digest_table
+from agent.track import main as track_main
+
+
+def _create_sample_listing(listing_id: str, title: str = "Test Job") -> Listing:
+    return Listing(
+        id=listing_id,
+        source="test_src",
+        title=title,
+        company="Company X",
+        location="Warszawa",
+        remote=True,
+        work_type="b2b",
+        salary="25k PLN",
+        description="Python data engineer",
+        url=f"https://example.com/job/{listing_id}",
+        posted_at="2026-11-20T10:00:00Z",
+    )
+
+
+def test_migrate_tracking_columns(tmp_path: Path):
+    db_file = tmp_path / "legacy_jobs.db"
+    
+    # 1. Non-existent db returns 0
+    assert migrate_tracking_columns(tmp_path / "non_existent.db") == 0
+
+    # 2. Simulate older table where pipeline_status might be NULL
+    with sqlite3.connect(str(db_file)) as conn:
+        conn.execute(
+            """
+            CREATE TABLE listings (
+                source TEXT NOT NULL,
+                id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                company TEXT,
+                location TEXT,
+                remote INTEGER NOT NULL DEFAULT 0,
+                work_type TEXT,
+                salary TEXT,
+                description TEXT,
+                url TEXT,
+                posted_at TEXT,
+                status TEXT NOT NULL DEFAULT 'new',
+                collected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (source, id)
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO listings (source, id, title) VALUES ('s1', 'item-1', 'Legacy Job 1')"
+        )
+        conn.execute(
+            "INSERT INTO listings (source, id, title) VALUES ('s1', 'item-2', 'Legacy Job 2')"
+        )
+        conn.commit()
+
+    # Run migration
+    changed = migrate_tracking_columns(db_file)
+    assert changed == 2
+
+    # Check backup created
+    bak_file = tmp_path / "legacy_jobs.db.bak"
+    assert bak_file.exists()
+
+    # Check columns exist and values are 'new'
+    with get_db_connection(db_file) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, pipeline_status, status_updated_at, notes FROM listings")
+        rows = cursor.fetchall()
+        assert len(rows) == 2
+        for r in rows:
+            assert r["pipeline_status"] == "new"
+            assert r["notes"] is None
+
+
+def test_set_pipeline_status(tmp_path: Path):
+    db_file = tmp_path / "test_set.db"
+    init_db(db_file)
+
+    l1 = _create_sample_listing("job-1", "AI Engineer")
+    save_listings([l1], db_path=db_file)
+
+    # 1. Update to shortlisted with notes
+    ok = set_pipeline_status("job-1", "shortlisted", notes="Reach out to recruiter", db_path=db_file)
+    assert ok is True
+
+    items = fetch_tracked_listings(status="shortlisted", db_path=db_file)
+    assert len(items) == 1
+    assert items[0]["id"] == "job-1"
+    assert items[0]["pipeline_status"] == "shortlisted"
+    assert items[0]["notes"] == "Reach out to recruiter"
+    assert items[0]["status_updated_at"] is not None
+
+    # 2. Update status without altering notes
+    ok = set_pipeline_status("job-1", "applied", db_path=db_file)
+    assert ok is True
+
+    items = fetch_tracked_listings(status="applied", db_path=db_file)
+    assert len(items) == 1
+    assert items[0]["pipeline_status"] == "applied"
+    assert items[0]["notes"] == "Reach out to recruiter"
+
+    # 3. Non-existent listing returns False
+    assert set_pipeline_status("nonexistent-id", "rejected", db_path=db_file) is False
+
+    # 4. Invalid status raises ValueError
+    with pytest.raises(ValueError, match="Invalid pipeline status 'invalid_status'"):
+        set_pipeline_status("job-1", "invalid_status", db_path=db_file)
+
+
+def test_fetch_tracked_listings_and_stats(tmp_path: Path):
+    db_file = tmp_path / "test_stats.db"
+    init_db(db_file)
+
+    listings = [
+        _create_sample_listing("j1"),
+        _create_sample_listing("j2"),
+        _create_sample_listing("j3"),
+        _create_sample_listing("j4"),
+        _create_sample_listing("j5"),
+    ]
+    save_listings(listings, db_path=db_file)
+
+    set_pipeline_status("j1", "shortlisted", db_path=db_file)
+    set_pipeline_status("j2", "applied", db_path=db_file)
+    set_pipeline_status("j3", "replied", db_path=db_file)
+    set_pipeline_status("j4", "rejected", db_path=db_file)
+    # j5 remains 'new'
+
+    # Check stats
+    stats = get_pipeline_stats(db_path=db_file)
+    assert stats == {
+        "new": 1,
+        "shortlisted": 1,
+        "applied": 1,
+        "replied": 1,
+        "rejected": 1,
+    }
+
+    # Check fetch with filter and limit
+    all_tracked = fetch_tracked_listings(db_path=db_file)
+    assert len(all_tracked) == 5
+
+    shortlisted = fetch_tracked_listings(status="shortlisted", db_path=db_file)
+    assert len(shortlisted) == 1
+    assert shortlisted[0]["id"] == "j1"
+
+    limited = fetch_tracked_listings(limit=2, db_path=db_file)
+    assert len(limited) == 2
+
+    with pytest.raises(ValueError, match="Invalid pipeline status 'bogus'"):
+        fetch_tracked_listings(status="bogus", db_path=db_file)
+
+
+def test_digest_excludes_applied_replied_rejected(tmp_path: Path):
+    db_file = tmp_path / "test_digest_tracking.db"
+    init_db(db_file)
+
+    # 5 listings scored with various pipeline statuses
+    for i in range(1, 6):
+        l = _create_sample_listing(f"offer-{i}", f"Title {i}")
+        save_listings([l], db_path=db_file)
+        save_score(
+            source="test_src",
+            id=f"offer-{i}",
+            score_data={
+                "score": 5.0 + i,
+                "skills_match": 8.0,
+                "experience_fit": 8.0,
+                "role_fit": 8.0,
+                "gaps": ["None"],
+                "reason": f"Fit reason {i}",
+                "model": "gemini",
+                "prompt_version": "v1.0",
+            },
+            db_path=db_file,
+        )
+
+    # offer-1: 'new' (score 6.0)
+    # offer-2: 'shortlisted' (score 7.0)
+    # offer-3: 'applied' (score 8.0) -> must be excluded
+    # offer-4: 'replied' (score 9.0) -> must be excluded
+    # offer-5: 'rejected' (score 10.0) -> must be excluded
+    set_pipeline_status("offer-2", "shortlisted", notes="Top choice", db_path=db_file)
+    set_pipeline_status("offer-3", "applied", db_path=db_file)
+    set_pipeline_status("offer-4", "replied", db_path=db_file)
+    set_pipeline_status("offer-5", "rejected", db_path=db_file)
+
+    digest_items = fetch_top_scored_listings(limit=10, db_path=db_file)
+
+    # Only offer-2 (shortlisted, score 7.0) and offer-1 (new, score 6.0) should be returned
+    assert len(digest_items) == 2
+    assert digest_items[0]["id"] == "offer-2"
+    assert digest_items[0]["pipeline_status"] == "shortlisted"
+    assert digest_items[0]["notes"] == "Top choice"
+    assert digest_items[1]["id"] == "offer-1"
+    assert digest_items[1]["pipeline_status"] == "new"
+
+    # Verify table formatting contains [SHORTLISTED] tag and note
+    table_str = format_digest_table(digest_items)
+    assert "[SHORTLISTED]" in table_str
+    assert "Top choice" in table_str
+    assert "Title 2" in table_str
+
+
+def test_cli_track_stats(tmp_path: Path, monkeypatch, capsys):
+    db_file = tmp_path / "cli_test.db"
+    init_db(db_file)
+    save_listings([_create_sample_listing("item-1")], db_path=db_file)
+
+    monkeypatch.setattr(
+        "sys.argv",
+        ["track", "--db", str(db_file), "stats"],
+    )
+    track_main()
+    captured = capsys.readouterr().out
+    assert "Personal Pipeline Tracking Stats" in captured
+    assert "new" in captured
+    assert "Total Listings" in captured
+
+
+def test_cli_track_set_and_list(tmp_path: Path, monkeypatch, capsys):
+    db_file = tmp_path / "cli_test.db"
+    init_db(db_file)
+    save_listings([_create_sample_listing("item-cli")], db_path=db_file)
+
+    # 1. CLI set status
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "track",
+            "--db",
+            str(db_file),
+            "set",
+            "item-cli",
+            "shortlisted",
+            "--note",
+            "Great company culture",
+        ],
+    )
+    track_main()
+    out = capsys.readouterr().out
+    assert "Successfully updated listing 'item-cli' -> status: 'shortlisted'" in out
+
+    # 2. CLI list
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "track",
+            "--db",
+            str(db_file),
+            "list",
+            "--status",
+            "shortlisted",
+        ],
+    )
+    track_main()
+    out = capsys.readouterr().out
+    assert "Tracked Job Listings ('shortlisted': 1)" in out
+    assert "SHORTLISTED" in out
+    assert "item-cli" in out
+    assert "Great company culture" in out
+
+
+def test_cli_track_set_invalid_id_exits(tmp_path: Path, monkeypatch):
+    db_file = tmp_path / "cli_test.db"
+    init_db(db_file)
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "track",
+            "--db",
+            str(db_file),
+            "set",
+            "missing-id",
+            "applied",
+        ],
+    )
+    with pytest.raises(SystemExit) as exc:
+        track_main()
+    assert exc.value.code == 1
