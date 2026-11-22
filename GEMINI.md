@@ -9,6 +9,7 @@ MVP, personal use only. Keep it simple.
   domains, certifications, languages, seniority, achievements). I review it by hand.
 - Search keywords and titles are generated from profile.yaml.
 - Scoring compares each listing against profile.yaml and the resume text.
+- Backlog is in BACKLOG.md; work only on items in Now unless I say otherwise.
 
 ## Target
 - Roles: AI / Solutions Engineer, data engineering, Python, cloud (Azure/AWS).
