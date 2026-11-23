@@ -44,7 +44,7 @@ The agent runs as a sequential, multi-stage pipeline stored in a local SQLite da
 1. **Profile Preparation**: Extracts verified skills, experience, and target roles from `data/resume.md` into `data/profile.yaml`.
 2. **Collection**: Fetches raw postings via public REST endpoints (JustJoinIT, NoFluffJobs, HackerNews) and deduplicates records into SQLite.
 3. **Rule-Based Filter**: Fast, zero-cost pre-filtering based on location, contract type, excluded titles/keywords, minimum salary, and required profile keywords.
-4. **LLM Scoring**: Passed listings are scored from 0 to 10 against the candidate's profile using LiteLLM (Google Gemini or local Ollama), returning subscores, missing skill gaps, and a concise reason.
+4. **LLM Scoring**: Passed listings are scored from 0 to 10 against the candidate's profile using LiteLLM (Google Gemini or local Ollama), returning subscores, missing skill gaps, and a concise reason. **Scoring strictly prioritizes the freshest offers first** (ordered by collection timestamp descending).
 5. **Terminal Digest**: Formats top-scored opportunities into an ASCII summary table, filtering out jobs you have already acted on.
 6. **Personal Tracking**: Built-in CLI tool to record application statuses (`new`, `shortlisted`, `applied`, `replied`, `rejected`) and personal notes.
 
@@ -190,6 +190,17 @@ python -m agent.run
 | `agent.track set` | `id`<br>`status`<br>`--note "<note>"`<br>`--db <path>` | Updates the tracking status and note for a listing. | `python -m agent.track set offer-123 applied --note "Sent CV on portal"` |
 | `src.extract_profile` | *(none)* | Parses `data/resume.md` to `data/profile.yaml`. | `python -m src.extract_profile` |
 
+### Offer Freshness & Incremental Runs
+
+- **Freshest-First Scoring**: When scoring passed listings, the agent queries SQLite with `ORDER BY collected_at DESC`. This prioritizes the newest offers ingested from the job boards over older backlogs.
+- **Incremental & Cached**: The agent never scores the same listing twice under the same `prompt_version`. Once scored, the listing is marked `status = 'scored'`, and subsequent runs automatically evaluate the next freshest unscored offers.
+- **Batch Processing with `--limit N`**: Passing `--limit 10` evaluates exactly the 10 freshest unscored offers that passed your rule-based filter. On your next run with `--limit 10`, it skips those already scored and proceeds to the next 10 freshest offers.
+- **Live Database Updates**: The database and digest table update dynamically on every run:
+  - New postings from collectors are inserted with status `new`.
+  - Rule filtering updates evaluated rows to `passed` or `rejected`.
+  - Newly scored offers are assigned numeric scores, gap analysis, and reasons.
+  - If a newly scored fresh offer achieves a higher match score than older listings, it immediately appears on the top digest leaderboard.
+
 ---
 
 ## Local Model Option (Ollama)
@@ -246,6 +257,7 @@ When running `python -m agent.digest` or completing `python -m agent.run`, the t
 - **`gaps`**: Specific technologies, tools, or domain experience mentioned in the job description that the candidate lacks.
 - **`reason`**: One-line rationale summarizing the evaluation.
 - **Actionable Filtering**: Any listing marked as `applied`, `replied`, or `rejected` via `agent.track set` is automatically excluded from future digest displays.
+- **Leaderboard Ranking vs. Freshness**: While the scoring step prioritizes evaluating the *most recently collected offers* first, the digest table displays the *highest-scoring offers overall* (`ORDER BY score DESC`). This produces an evolving leaderboard that automatically refreshes after every run whenever a newly evaluated offer earns a top match score.
 
 ---
 
