@@ -1,6 +1,7 @@
 """Terminal digest viewer for top-scored job listings."""
 
 from pathlib import Path
+import re
 import sys
 from typing import Optional
 
@@ -8,49 +9,66 @@ from agent.config import load_scoring_config
 from agent.storage import DEFAULT_DB_PATH, fetch_top_scored_listings, init_db
 
 
+def format_listing_block(item: dict, index: Optional[int] = None) -> list[str]:
+    """Format a single listing into readable key:value lines (Layout 2)."""
+    lines = []
+    lines.append("-" * 80)
+    if index is not None:
+        lines.append(f"#{index}")
+
+    score_val = f"{item['score']:.1f}/10" if item.get("score") is not None else "N/A"
+    status_val = item.get("pipeline_status", "new").upper()
+    lines.append(f"Score:     {score_val} [{status_val}]")
+    lines.append(f"Title:     {item.get('title', '')}")
+    lines.append(f"Company:   {item.get('company', '')}")
+
+    location = item.get("location") or ""
+    if item.get("remote"):
+        location = "Remote" if not location or location.lower() == "remote" else f"Remote ({location})"
+    else:
+        location = location or "Not specified"
+    lines.append(f"Location:  {location}")
+
+    work_type = item.get("work_type") or ""
+    salary = item.get("salary") or ""
+    if work_type and salary:
+        clean_salary = re.sub(rf"\s*\({re.escape(work_type)}\)", "", salary, flags=re.IGNORECASE).strip()
+        work_str = f"{work_type} ({clean_salary})"
+    elif work_type:
+        work_str = work_type
+    elif salary:
+        work_str = salary
+    else:
+        work_str = "Not specified"
+    lines.append(f"Work:      {work_str}")
+
+    if item.get("reason"):
+        lines.append(f"Reason:    {item['reason']}")
+
+    gaps = item.get("gaps")
+    if gaps:
+        gaps_str = ", ".join(gaps) if isinstance(gaps, list) else str(gaps)
+        lines.append(f"Gaps:      {gaps_str}")
+
+    if item.get("notes"):
+        lines.append(f"Notes:     {item['notes']}")
+
+    lines.append(f"ID:        {item.get('id', '')}")
+    if item.get("url"):
+        lines.append(f"URL:       {item['url']}")
+
+    return lines
+
+
 def format_digest_table(listings: list[dict]) -> str:
-    """Format scored listings into a clean, readable ASCII table."""
+    """Format scored listings into clean key:value blocks."""
     if not listings:
         return "No actionable scored job listings found in database."
 
     lines = []
-    lines.append("=" * 110)
-    lines.append(f"{'#':<3} | {'SCORE':<5} | {'TITLE':<30} | {'COMPANY':<18} | {'LOCATION':<14} | {'WORK TYPE':<10}")
-    lines.append("-" * 110)
-
     for idx, item in enumerate(listings, start=1):
-        title = (item["title"][:28] + "..") if len(item["title"]) > 30 else item["title"]
-        company = (item["company"][:16] + "..") if len(item["company"]) > 18 else item["company"]
-        location = item["location"]
-        if item["remote"]:
-            location = "Remote" if not location else f"{location} (Remote)"
-        location = (location[:12] + "..") if len(location) > 14 else location
-        work_type = (item["work_type"][:8] + "..") if len(item["work_type"]) > 10 else item["work_type"]
-        score_val = f"{item['score']:.1f}"
-
-        lines.append(f"{idx:<3} | {score_val:<5} | {title:<30} | {company:<18} | {location:<14} | {work_type:<10}")
-
-        # Sub-row with Reason, Gaps, Status tag, and URL
-        gaps_str = ", ".join(item.get("gaps", [])) or "None"
-        if len(gaps_str) > 60:
-            gaps_str = gaps_str[:57] + "..."
-        reason_str = item.get("reason", "")
-        if len(reason_str) > 85:
-            reason_str = reason_str[:82] + "..."
-
-        pipeline_status = item.get("pipeline_status", "new")
-        status_tag = f" [{pipeline_status.upper()}]" if pipeline_status != "new" else ""
-
-        lines.append(f"    Gaps:   {gaps_str}")
-        lines.append(f"    Reason: {reason_str}{status_tag}")
-        if item.get("notes"):
-            lines.append(f"    Notes:  {item['notes']}")
-        if item.get("salary"):
-            lines.append(f"    Salary: {item['salary']}")
-        lines.append(f"    ID:     {item.get('id', '')}")
-        lines.append(f"    URL:    {item.get('url', '')}")
-        lines.append("-" * 110)
-
+        lines.extend(format_listing_block(item, index=idx))
+    lines.append("-" * 80)
     return "\n".join(lines)
 
 

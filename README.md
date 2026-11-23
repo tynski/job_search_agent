@@ -237,16 +237,18 @@ When running `python -m agent.digest` or completing `python -m agent.run`, the t
 
 ```text
 === Top 3 Actionable IT Job Matches (by LLM Match Score) ===
-==============================================================================================================
-#   | SCORE | TITLE                          | COMPANY            | LOCATION       | WORK TYPE 
---------------------------------------------------------------------------------------------------------------
-1   | 8.5   | Senior Python Engineer         | Example Corp       | Remote         | b2b       
-    Gaps:   Snowflake, dbt
-    Reason: Strong match for core Python, SQL, and AWS; lacks Snowflake data warehouse experience.
-    Salary: 24,000 - 28,000 PLN (b2b)
-    ID:     example-corp-senior-python-engineer
-    URL:    https://example.com/job/senior-python-engineer
---------------------------------------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+#1
+Score:     8.5/10 [NEW]
+Title:     Senior Python Engineer
+Company:   Example Corp
+Location:  Remote (Warsaw)
+Work:      b2b (24,000 - 28,000 PLN)
+Reason:    Strong match for core Python, SQL, and AWS; lacks Snowflake data warehouse experience.
+Gaps:      Snowflake, dbt
+ID:        example-corp-senior-python-engineer
+URL:       https://example.com/job/senior-python-engineer
+--------------------------------------------------------------------------------
 ```
 
 ### Scoring Rubric

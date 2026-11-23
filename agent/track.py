@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 import sys
 
+from agent.digest import format_listing_block
 from agent.storage import (
     DEFAULT_DB_PATH,
     VALID_PIPELINE_STATUSES,
@@ -18,33 +19,14 @@ from agent.storage import (
 
 
 def format_listings_table(listings: list[dict]) -> str:
-    """Format tracked listings into a readable ASCII table."""
+    """Format tracked listings into readable key:value blocks."""
     if not listings:
         return "No listings found matching criteria."
 
     lines = []
-    lines.append("=" * 115)
-    lines.append(f"{'SCORE':<5} | {'STATUS':<11} | {'COMPANY':<18} | {'LOCATION':<16} | {'TITLE'}")
-    lines.append("-" * 115)
-
-    for item in listings:
-        score_val = f"{item['score']:.1f}" if item.get("score") is not None else "N/A"
-        status_val = item.get("pipeline_status", "new").upper()
-        title = (item["title"][:40] + "..") if len(item["title"]) > 42 else item["title"]
-        company = (item["company"][:16] + "..") if len(item["company"]) > 18 else item["company"]
-        location = item.get("location") or ""
-        if item.get("remote"):
-            location = "Remote" if not location else f"{location} (Remote)"
-        location = (location[:14] + "..") if len(location) > 16 else location
-
-        lines.append(f"{score_val:<5} | {status_val:<11} | {company:<18} | {location:<16} | {title}")
-        lines.append(f"      ID:     {item['id']}")
-        if item.get("notes"):
-            lines.append(f"      Notes:  {item['notes']}")
-        if item.get("url"):
-            lines.append(f"      URL:    {item['url']}")
-        lines.append("-" * 115)
-
+    for idx, item in enumerate(listings, start=1):
+        lines.extend(format_listing_block(item, index=idx))
+    lines.append("-" * 80)
     return "\n".join(lines)
 
 

@@ -220,7 +220,7 @@ def test_digest_excludes_applied_replied_rejected(tmp_path: Path):
     assert "[SHORTLISTED]" in table_str
     assert "Top choice" in table_str
     assert "Title 2" in table_str
-    assert "ID:     offer-2" in table_str
+    assert "ID:        offer-2" in table_str
 
 
 def test_cli_track_stats(tmp_path: Path, monkeypatch, capsys):
