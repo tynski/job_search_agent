@@ -47,6 +47,7 @@ def format_digest_table(listings: list[dict]) -> str:
             lines.append(f"    Notes:  {item['notes']}")
         if item.get("salary"):
             lines.append(f"    Salary: {item['salary']}")
+        lines.append(f"    ID:     {item.get('id', '')}")
         lines.append(f"    URL:    {item.get('url', '')}")
         lines.append("-" * 110)
 

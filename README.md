@@ -186,8 +186,9 @@ python -m agent.run
 | `agent.score` | `--limit <N>` | Scores passed listings with configured LLM. | `python -m agent.score --limit 10` |
 | `agent.digest` | `--top <N>` | Displays top scored actionable opportunities in ASCII table. | `python -m agent.digest --top 15` |
 | `agent.track stats` | `--db <path>` | Prints counts of listings across all tracking statuses. | `python -m agent.track stats` |
+| `agent.track find` | `query`<br>`--db <path>` | Searches listings by company, title, or ID snippet. | `python -m agent.track find cognitiva` |
 | `agent.track list` | `--status <status>`<br>`--limit <N>`<br>`--db <path>` | Lists tracked listings filtered by status (`new`, `shortlisted`, `applied`, `replied`, `rejected`). | `python -m agent.track list --status shortlisted` |
-| `agent.track set` | `id`<br>`status`<br>`--note "<note>"`<br>`--db <path>` | Updates the tracking status and note for a listing. | `python -m agent.track set offer-123 applied --note "Sent CV on portal"` |
+| `agent.track set` | `id_or_query`<br>`status`<br>`--note "<note>"`<br>`--all`<br>`--db <path>` | Updates tracking status and note by exact ID or company/title query (use `--all` for multi-location duplicates). | `python -m agent.track set cognitiva applied --all --note "Sent CV"` |
 | `src.extract_profile` | *(none)* | Parses `data/resume.md` to `data/profile.yaml`. | `python -m src.extract_profile` |
 
 ### Offer Freshness & Incremental Runs
@@ -243,6 +244,7 @@ When running `python -m agent.digest` or completing `python -m agent.run`, the t
     Gaps:   Snowflake, dbt
     Reason: Strong match for core Python, SQL, and AWS; lacks Snowflake data warehouse experience.
     Salary: 24,000 - 28,000 PLN (b2b)
+    ID:     example-corp-senior-python-engineer
     URL:    https://example.com/job/senior-python-engineer
 --------------------------------------------------------------------------------------------------------------
 ```

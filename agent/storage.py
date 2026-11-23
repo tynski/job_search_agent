@@ -260,8 +260,75 @@ def set_pipeline_status(
     db_path: Path | str = DEFAULT_DB_PATH,
 ) -> bool:
     """
-    Update personal tracking pipeline_status and optional notes for a listing.
+    Update personal tracking pipeline_status and optional notes for a listing by ID.
     Allowed statuses: new, shortlisted, applied, replied, rejected.
+    """
+    count, _ = set_pipeline_status_by_query(
+        query=listing_id,
+        status=status,
+        notes=notes,
+        match_all=False,
+        db_path=db_path,
+    )
+    return count > 0
+
+
+def find_listings_by_query(
+    query: str,
+    db_path: Path | str = DEFAULT_DB_PATH,
+) -> list[dict[str, Any]]:
+    """
+    Find listings matching query by exact ID, or substring of ID, company, or title.
+    Returns list of listing dicts ordered by score DESC, collected_at DESC.
+    """
+    init_db(db_path)
+    clean_query = query.strip()
+    if not clean_query:
+        return []
+
+    with get_db_connection(db_path) as conn:
+        cursor = conn.cursor()
+        # 1. Exact ID match check first
+        cursor.execute(
+            """
+            SELECT id, source, title, company, location, remote, work_type,
+                   salary, url, score, pipeline_status, notes, status_updated_at
+            FROM listings
+            WHERE id = ?
+            """,
+            (clean_query,),
+        )
+        exact_matches = [dict(r) for r in cursor.fetchall()]
+        if exact_matches:
+            return exact_matches
+
+        # 2. Substring match across id, company, and title (case-insensitive in SQLite LIKE)
+        pattern = f"%{clean_query}%"
+        cursor.execute(
+            """
+            SELECT id, source, title, company, location, remote, work_type,
+                   salary, url, score, pipeline_status, notes, status_updated_at
+            FROM listings
+            WHERE id LIKE ? OR company LIKE ? OR title LIKE ?
+            ORDER BY score DESC, collected_at DESC
+            """,
+            (pattern, pattern, pattern),
+        )
+        return [dict(r) for r in cursor.fetchall()]
+
+
+def set_pipeline_status_by_query(
+    query: str,
+    status: str,
+    notes: Optional[str] = None,
+    match_all: bool = False,
+    db_path: Path | str = DEFAULT_DB_PATH,
+) -> tuple[int, list[dict[str, Any]]]:
+    """
+    Update pipeline_status for listings matching query.
+    - If no listings match, returns (0, []).
+    - If multiple listings match and match_all is False, returns (0, matches) without updating.
+    - If match_all is True or exactly 1 listing matches, updates matching listings and returns (updated_count, matches).
     """
     status_clean = status.lower().strip()
     if status_clean not in VALID_PIPELINE_STATUSES:
@@ -269,32 +336,41 @@ def set_pipeline_status(
             f"Invalid pipeline status '{status}'. Must be one of: {sorted(VALID_PIPELINE_STATUSES)}"
         )
 
+    matches = find_listings_by_query(query, db_path=db_path)
+    if not matches:
+        return 0, []
+
+    if len(matches) > 1 and not match_all:
+        return 0, matches
+
+    matched_ids = [m["id"] for m in matches]
+    placeholders = ",".join(["?"] * len(matched_ids))
     init_db(db_path)
     with get_db_connection(db_path) as conn:
         cursor = conn.cursor()
         if notes is not None:
             cursor.execute(
-                """
+                f"""
                 UPDATE listings
                 SET pipeline_status = ?,
                     status_updated_at = CURRENT_TIMESTAMP,
                     notes = ?
-                WHERE id = ?
+                WHERE id IN ({placeholders})
                 """,
-                (status_clean, notes, listing_id),
+                [status_clean, notes] + matched_ids,
             )
         else:
             cursor.execute(
-                """
+                f"""
                 UPDATE listings
                 SET pipeline_status = ?,
                     status_updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
+                WHERE id IN ({placeholders})
                 """,
-                (status_clean, listing_id),
+                [status_clean] + matched_ids,
             )
         conn.commit()
-        return cursor.rowcount > 0
+        return cursor.rowcount, matches
 
 
 def fetch_tracked_listings(

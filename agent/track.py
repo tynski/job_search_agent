@@ -8,10 +8,12 @@ from agent.storage import (
     DEFAULT_DB_PATH,
     VALID_PIPELINE_STATUSES,
     fetch_tracked_listings,
+    find_listings_by_query,
     get_pipeline_stats,
     init_db,
     migrate_tracking_columns,
     set_pipeline_status,
+    set_pipeline_status_by_query,
 )
 
 
@@ -22,22 +24,25 @@ def format_listings_table(listings: list[dict]) -> str:
 
     lines = []
     lines.append("=" * 115)
-    lines.append(f"{'SCORE':<5} | {'STATUS':<11} | {'ID':<30} | {'TITLE':<25} | {'COMPANY':<18} | {'NOTES'}")
+    lines.append(f"{'SCORE':<5} | {'STATUS':<11} | {'COMPANY':<18} | {'LOCATION':<16} | {'TITLE'}")
     lines.append("-" * 115)
 
     for item in listings:
         score_val = f"{item['score']:.1f}" if item.get("score") is not None else "N/A"
         status_val = item.get("pipeline_status", "new").upper()
-        item_id = (item["id"][:28] + "..") if len(item["id"]) > 30 else item["id"]
-        title = (item["title"][:23] + "..") if len(item["title"]) > 25 else item["title"]
+        title = (item["title"][:40] + "..") if len(item["title"]) > 42 else item["title"]
         company = (item["company"][:16] + "..") if len(item["company"]) > 18 else item["company"]
-        notes = (item.get("notes") or "")
-        if len(notes) > 35:
-            notes = notes[:32] + "..."
+        location = item.get("location") or ""
+        if item.get("remote"):
+            location = "Remote" if not location else f"{location} (Remote)"
+        location = (location[:14] + "..") if len(location) > 16 else location
 
-        lines.append(f"{score_val:<5} | {status_val:<11} | {item_id:<30} | {title:<25} | {company:<18} | {notes}")
+        lines.append(f"{score_val:<5} | {status_val:<11} | {company:<18} | {location:<16} | {title}")
+        lines.append(f"      ID:     {item['id']}")
+        if item.get("notes"):
+            lines.append(f"      Notes:  {item['notes']}")
         if item.get("url"):
-            lines.append(f"      URL: {item['url']}")
+            lines.append(f"      URL:    {item['url']}")
         lines.append("-" * 115)
 
     return "\n".join(lines)
@@ -53,29 +58,54 @@ def cmd_list(args: argparse.Namespace) -> None:
     print()
 
 
+def cmd_find(args: argparse.Namespace) -> None:
+    db_path = Path(args.db)
+    init_db(db_path)
+    matches = find_listings_by_query(args.query, db_path=db_path)
+    print(f"\n=== Search Results for '{args.query}' ({len(matches)} match(es)) ===")
+    print(format_listings_table(matches))
+    print()
+
+
 def cmd_set(args: argparse.Namespace) -> None:
     db_path = Path(args.db)
     init_db(db_path)
-    listing_id = args.id
+    query = args.id_or_query.strip()
     status = args.status.lower().strip()
 
     if status not in VALID_PIPELINE_STATUSES:
         print(f"Error: Invalid status '{status}'. Must be one of: {sorted(VALID_PIPELINE_STATUSES)}")
         sys.exit(1)
 
-    updated = set_pipeline_status(
-        listing_id=listing_id,
+    updated_count, matches = set_pipeline_status_by_query(
+        query=query,
         status=status,
         notes=args.note,
+        match_all=args.all,
         db_path=db_path,
     )
 
-    if updated:
-        note_str = f" (note: '{args.note}')" if args.note is not None else ""
-        print(f"Successfully updated listing '{listing_id}' -> status: '{status}'{note_str}")
+    if updated_count == 0:
+        if not matches:
+            print(f"Error: No listings found matching '{query}'.")
+            sys.exit(1)
+        else:
+            # Multiple matches found and --all was not passed
+            print(f"\nFound {len(matches)} listings matching '{query}':")
+            print(format_listings_table(matches))
+            print(f"Multiple listings matched! To update a specific listing, use its exact ID:")
+            print(f"  python -m agent.track set <exact_id> {status}")
+            print(f"\nOr to update all {len(matches)} matching listings at once, re-run with --all:")
+            note_flag = f' --note "{args.note}"' if args.note else ""
+            print(f"  python -m agent.track set \"{query}\" {status} --all{note_flag}\n")
+            sys.exit(1)
+
+    note_str = f" (note: '{args.note}')" if args.note is not None else ""
+    if updated_count == 1:
+        item = matches[0]
+        print(f"Successfully updated listing '{item['id']}' ({item.get('company', '')} - {item.get('title', '')}) -> status: '{status}'{note_str}")
     else:
-        print(f"Error: Listing with ID '{listing_id}' not found in database.")
-        sys.exit(1)
+        print(f"Successfully updated {updated_count} listings matching '{query}' -> status: '{status}'{note_str}")
 
 
 def cmd_stats(args: argparse.Namespace) -> None:
@@ -120,9 +150,18 @@ def main() -> None:
     )
     list_parser.set_defaults(func=cmd_list)
 
+    # Subcommand: find
+    find_parser = subparsers.add_parser("find", help="Find listings by company name, title, or ID keyword.")
+    find_parser.add_argument("query", type=str, help="Search keyword (e.g. company name, title, or ID snippet).")
+    find_parser.set_defaults(func=cmd_find)
+
     # Subcommand: set
     set_parser = subparsers.add_parser("set", help="Set pipeline tracking status for a listing.")
-    set_parser.add_argument("id", type=str, help="ID of the listing to update.")
+    set_parser.add_argument(
+        "id_or_query",
+        type=str,
+        help="ID, company name, or title keyword of the listing to update.",
+    )
     set_parser.add_argument(
         "status",
         type=str,
@@ -134,6 +173,11 @@ def main() -> None:
         type=str,
         default=None,
         help="Optional note to attach to the listing.",
+    )
+    set_parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Apply update to all matching listings if multiple are found (e.g. multi-location duplicates).",
     )
     set_parser.set_defaults(func=cmd_set)
 

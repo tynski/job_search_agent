@@ -215,11 +215,12 @@ def test_digest_excludes_applied_replied_rejected(tmp_path: Path):
     assert digest_items[1]["id"] == "offer-1"
     assert digest_items[1]["pipeline_status"] == "new"
 
-    # Verify table formatting contains [SHORTLISTED] tag and note
+    # Verify table formatting contains [SHORTLISTED] tag, ID, and note
     table_str = format_digest_table(digest_items)
     assert "[SHORTLISTED]" in table_str
     assert "Top choice" in table_str
     assert "Title 2" in table_str
+    assert "ID:     offer-2" in table_str
 
 
 def test_cli_track_stats(tmp_path: Path, monkeypatch, capsys):
@@ -259,7 +260,8 @@ def test_cli_track_set_and_list(tmp_path: Path, monkeypatch, capsys):
     )
     track_main()
     out = capsys.readouterr().out
-    assert "Successfully updated listing 'item-cli' -> status: 'shortlisted'" in out
+    assert "Successfully updated listing 'item-cli'" in out
+    assert "status: 'shortlisted'" in out
 
     # 2. CLI list
     monkeypatch.setattr(
@@ -299,3 +301,68 @@ def test_cli_track_set_invalid_id_exits(tmp_path: Path, monkeypatch):
     with pytest.raises(SystemExit) as exc:
         track_main()
     assert exc.value.code == 1
+
+
+def test_find_and_smart_set_with_all_flag(tmp_path: Path, monkeypatch, capsys):
+    from agent.storage import find_listings_by_query, set_pipeline_status_by_query
+
+    db_file = tmp_path / "smart_test.db"
+    init_db(db_file)
+
+    l1 = Listing(id="cog-lodz", source="nfj", title="Python Engineer", company="Cognitiva", location="Lodz", remote=True, work_type="b2b", salary="20k", description="", url="", posted_at="")
+    l2 = Listing(id="cog-waw", source="nfj", title="Python Engineer", company="Cognitiva", location="Warsaw", remote=True, work_type="b2b", salary="20k", description="", url="", posted_at="")
+    l3 = Listing(id="other-job", source="jjit", title="Data Engineer", company="Acme Corp", location="Krakow", remote=False, work_type="b2b", salary="22k", description="", url="", posted_at="")
+    save_listings([l1, l2, l3], db_path=db_file)
+
+    # 1. find_listings_by_query
+    matches = find_listings_by_query("cognitiva", db_path=db_file)
+    assert len(matches) == 2
+    assert {m["id"] for m in matches} == {"cog-lodz", "cog-waw"}
+
+    # 2. set_pipeline_status_by_query: multiple matches without match_all
+    count, matched = set_pipeline_status_by_query("cognitiva", "applied", match_all=False, db_path=db_file)
+    assert count == 0
+    assert len(matched) == 2
+
+    # 3. set_pipeline_status_by_query: multiple matches with match_all
+    count, matched = set_pipeline_status_by_query("cognitiva", "applied", notes="Applied batch", match_all=True, db_path=db_file)
+    assert count == 2
+    assert len(matched) == 2
+
+    # Verify both are applied
+    applied = fetch_tracked_listings(status="applied", db_path=db_file)
+    assert len(applied) == 2
+    assert {a["id"] for a in applied} == {"cog-lodz", "cog-waw"}
+    assert applied[0]["notes"] == "Applied batch"
+
+    # 4. CLI find command
+    monkeypatch.setattr(
+        "sys.argv",
+        ["track", "--db", str(db_file), "find", "cognitiva"],
+    )
+    track_main()
+    captured = capsys.readouterr().out
+    assert "Search Results for 'cognitiva' (2 match(es))" in captured
+    assert "cog-lodz" in captured
+    assert "cog-waw" in captured
+
+    # 5. CLI set multiple without --all shows warning and exits 1
+    monkeypatch.setattr(
+        "sys.argv",
+        ["track", "--db", str(db_file), "set", "cognitiva", "shortlisted"],
+    )
+    with pytest.raises(SystemExit) as exc:
+        track_main()
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert "Found 2 listings matching 'cognitiva'" in out
+    assert "re-run with --all" in out
+
+    # 6. CLI set with --all succeeds
+    monkeypatch.setattr(
+        "sys.argv",
+        ["track", "--db", str(db_file), "set", "cognitiva", "shortlisted", "--all", "--note", "Shortlisted all"],
+    )
+    track_main()
+    out = capsys.readouterr().out
+    assert "Successfully updated 2 listings matching 'cognitiva' -> status: 'shortlisted'" in out
