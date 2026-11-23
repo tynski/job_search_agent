@@ -3,7 +3,6 @@
 import json
 from pathlib import Path
 
-from agent.collectors.hackernews import HackerNewsCollector
 from agent.collectors.justjoin_it import JustJoinITCollector
 from agent.collectors.nofluffjobs import NoFluffJobsCollector
 
@@ -46,22 +45,3 @@ def test_nofluffjobs_normalization():
     assert "Python" in listing.description
     assert "https://nofluffjobs.com/job/senior-python-backend-developer-dataflow-tech" in listing.url
     assert listing.posted_at.startswith("2024-") or listing.posted_at.startswith("202")
-
-
-def test_hackernews_normalization():
-    fixture_path = FIXTURES_DIR / "sample_hn.json"
-    with open(fixture_path, encoding="utf-8") as f:
-        data = json.load(f)
-
-    listing = HackerNewsCollector.normalize(data[0])
-    assert listing is not None
-    assert listing.id == "hn_41234567"
-    assert listing.source == "hackernews"
-    assert listing.company == "Stripe"
-    assert listing.title == "AI Solutions Engineer"
-    assert "Remote" in listing.location
-    assert listing.remote is True
-    assert listing.work_type == "full-time"
-    assert "$160k - $210k" in listing.salary
-    assert "Stripe" in listing.description
-    assert listing.url == "https://news.ycombinator.com/item?id=41234567"

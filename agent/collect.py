@@ -3,7 +3,6 @@
 import sys
 from pathlib import Path
 
-from agent.collectors.hackernews import HackerNewsCollector
 from agent.collectors.justjoin_it import JustJoinITCollector
 from agent.collectors.nofluffjobs import NoFluffJobsCollector
 from agent.storage import count_listings, init_db, save_listings
@@ -19,7 +18,6 @@ def run_collection(db_path: Path = DEFAULT_DB) -> None:
     collectors = [
         ("JustJoinIT", JustJoinITCollector()),
         ("NoFluffJobs", NoFluffJobsCollector()),
-        ("HackerNews", HackerNewsCollector()),
     ]
 
     total_new = 0

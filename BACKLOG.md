@@ -4,7 +4,7 @@
 - [ ] Compare Gemini vs local Qwen on 20 labeled listings
 
 ## Next
-- [ ] More sources (protocol.it, pracuj.pl), delete hackernews
+- [ ] More sources (research public API alternatives; pracuj.pl and theprotocol.it blocked by Cloudflare Turnstile 403)
 - [ ] garbage collection - delete records older than 30 days
 
 ## Later
@@ -18,3 +18,4 @@
 ## Done
 - [x] Add README.md, describe how to use agent
 - [x] make match easier to identify and write in CLI - maybe id or short name?
+- [x] Delete Hacker News collector from code, tests, and documentation

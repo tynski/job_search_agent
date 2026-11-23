@@ -45,7 +45,7 @@ def test_storage_and_deduplication(tmp_path: Path):
     # Second save with 1 existing and 1 new
     l3 = Listing(
         id="offer-3",
-        source="hackernews",
+        source="test_source",
         title="AI Engineer",
         company="OpenAI",
         location="Remote",

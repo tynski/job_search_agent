@@ -17,7 +17,7 @@ The agent runs as a sequential, multi-stage pipeline stored in a local SQLite da
                                |
                                v
  +-----------------------------------------------------------+
- | 1. Collect (JustJoinIT, NoFluffJobs, HackerNews -> DB)    |
+ | 1. Collect (JustJoinIT, NoFluffJobs -> DB)                |
  +-----------------------------+-----------------------------+
                                |
                                v
@@ -42,7 +42,7 @@ The agent runs as a sequential, multi-stage pipeline stored in a local SQLite da
 ```
 
 1. **Profile Preparation**: Extracts verified skills, experience, and target roles from `data/resume.md` into `data/profile.yaml`.
-2. **Collection**: Fetches raw postings via public REST endpoints (JustJoinIT, NoFluffJobs, HackerNews) and deduplicates records into SQLite.
+2. **Collection**: Fetches raw postings via public REST endpoints (JustJoinIT, NoFluffJobs) and deduplicates records into SQLite.
 3. **Rule-Based Filter**: Fast, zero-cost pre-filtering based on location, contract type, excluded titles/keywords, minimum salary, and required profile keywords.
 4. **LLM Scoring**: Passed listings are scored from 0 to 10 against the candidate's profile using LiteLLM (Google Gemini or local Ollama), returning subscores, missing skill gaps, and a concise reason. **Scoring strictly prioritizes the freshest offers first** (ordered by collection timestamp descending).
 5. **Terminal Digest**: Formats top-scored opportunities into an ASCII summary table, filtering out jobs you have already acted on.
@@ -119,7 +119,7 @@ Key configuration sections:
 | **`scoring.top_n_digest`** | Default number of listings displayed in the terminal digest. |
 
 > [!NOTE]
-> **Listing Sources**: Collectors are currently active for JustJoinIT, NoFluffJobs, and HackerNews. Enabling/disabling individual sources via config is slated in the roadmap.
+> **Listing Sources**: Collectors are currently active for JustJoinIT and NoFluffJobs. Enabling/disabling individual sources via config is slated in the roadmap.
 > **Waves / Depth**: Ingesting older listings in sequential waves is currently tracked in [BACKLOG.md](BACKLOG.md).
 
 ### 3. Candidate Profile (`profile.yaml`)
@@ -289,7 +289,7 @@ URL:       https://example.com/job/senior-python-engineer
 ```text
 job_search_agent/
 ├── agent/
-│   ├── collectors/          # Platform collectors (JustJoinIT, NoFluffJobs, HackerNews)
+│   ├── collectors/          # Platform collectors (JustJoinIT, NoFluffJobs)
 │   ├── collect.py           # Ingestion CLI
 │   ├── config.py            # YAML & profile loaders
 │   ├── digest.py            # Terminal table formatter

@@ -151,7 +151,7 @@ def test_filter_missing_work_type_and_salary_does_not_reject():
     cfg = get_mock_filter_config()
     listing = Listing(
         id="pass-missing-fields",
-        source="hackernews",
+        source="test_source",
         title="Solutions Engineer",
         company="Startup",
         location="Remote",
