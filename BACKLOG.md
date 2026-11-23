@@ -1,13 +1,15 @@
 # Backlog
 
 ## Now
-- [ ] Depth-controlled processing: fresh listings first, older in waves
+- [ ] make match easier to identify and write in CLI - maybe id or short name?
 
 ## Next
+- [ ] More sources (protocol.it, pracuj.pl)
+- [ ] garbage collection - delete records older than 30 days
 - [ ] Compare Gemini vs local Qwen on 20 labeled listings
 
 ## Later
-- [ ] More sources
+- [ ] simple UI
 
 ## Ideas (not decided)
 - Score batches of 3-5 listings per request
