@@ -92,6 +92,7 @@ def load_scoring_config(config_path: Path | str = DEFAULT_CONFIG_PATH) -> dict[s
     primary_model = scoring_cfg.get("primary_model") or scoring_cfg.get("model", "gemini/gemini-2.5-flash")
     fallback_model = scoring_cfg.get("fallback_model", "ollama/qwen3.5:4b")
     local_api_base = scoring_cfg.get("local_api_base", "http://localhost:11434")
+    local_timeout = float(scoring_cfg.get("local_timeout", 60.0))
     num_retries = int(scoring_cfg.get("num_retries", 3))
     retry_backoff = float(scoring_cfg.get("retry_backoff", 2.0))
 
@@ -103,6 +104,7 @@ def load_scoring_config(config_path: Path | str = DEFAULT_CONFIG_PATH) -> dict[s
         "model": primary_model,  # Backwards compatibility
         "fallback_model": fallback_model,
         "local_api_base": local_api_base,
+        "local_timeout": local_timeout,
         "num_retries": num_retries,
         "retry_backoff": retry_backoff,
         "max_attempts": max_attempts,

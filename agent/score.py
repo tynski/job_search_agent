@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import re
 import sys
+import time
 from typing import Any, Optional
 from dotenv import load_dotenv
 import litellm
@@ -155,13 +156,57 @@ def _parse_and_validate_score_json(raw_text: str) -> dict[str, Any]:
     return data
 
 
+def _execute_completion(
+    call_kwargs: dict[str, Any],
+    num_retries: int = 3,
+    retry_backoff: float = 2.0,
+    has_tenacity: bool = True,
+) -> Any:
+    """Execute litellm.completion with tenacity if present, or fallback python retry loop."""
+    if has_tenacity and num_retries > 0:
+        try:
+            return litellm.completion(**call_kwargs)
+        except Exception as exc:
+            # If litellm fails due to missing tenacity, fallback to python retry loop
+            if "tenacity" not in str(exc).lower():
+                raise
+            kwargs_without_retries = dict(call_kwargs)
+            kwargs_without_retries.pop("num_retries", None)
+            kwargs_without_retries.pop("retry_strategy", None)
+            return _execute_completion(
+                kwargs_without_retries,
+                num_retries=num_retries,
+                retry_backoff=retry_backoff,
+                has_tenacity=False,
+            )
+    elif num_retries <= 0:
+        return litellm.completion(**call_kwargs)
+
+    # Pure Python retry loop fallback when tenacity is absent
+    last_exc = None
+    for attempt in range(num_retries + 1):
+        try:
+            return litellm.completion(**call_kwargs)
+        except Exception as e:
+            last_exc = e
+            if is_fatal_error(e):
+                raise
+            if attempt < num_retries:
+                sleep_sec = retry_backoff * (2 ** attempt)
+                time.sleep(sleep_sec)
+    if last_exc:
+        raise last_exc
+
+
 def _invoke_completion_with_validation(
     model: str,
     prompt: str,
     temperature: Optional[float] = None,
     api_base: Optional[str] = None,
     num_retries: int = 3,
+    retry_backoff: float = 2.0,
     is_local: bool = False,
+    timeout: float = 60.0,
     prompt_version: str = "v1.0",
 ) -> tuple[dict[str, Any], int, int, float]:
     """Execute completion call with exponential retry for 503/429 and 1 retry on malformed JSON."""
@@ -170,14 +215,21 @@ def _invoke_completion_with_validation(
     total_completion_tokens = 0
     total_cost = 0.0
 
+    try:
+        import tenacity  # noqa: F401
+        has_tenacity = True
+    except ImportError:
+        has_tenacity = False
+
     call_kwargs: dict[str, Any] = {
         "model": model,
         "messages": messages,
         "response_format": {"type": "json_object"},
-        "num_retries": num_retries,
-        "retry_strategy": "exponential_backoff_retry",
         "drop_params": True,
     }
+    if has_tenacity and num_retries > 0:
+        call_kwargs["num_retries"] = num_retries
+        call_kwargs["retry_strategy"] = "exponential_backoff_retry"
     if api_base:
         call_kwargs["api_base"] = api_base
     if temperature is not None:
@@ -185,9 +237,16 @@ def _invoke_completion_with_validation(
     if is_local:
         call_kwargs["thinking"] = {"type": "disabled"}
         call_kwargs["extra_body"] = {"thinking": False}
+        if timeout > 0:
+            call_kwargs["timeout"] = timeout
 
     # Attempt 1
-    resp = litellm.completion(**call_kwargs)
+    resp = _execute_completion(
+        call_kwargs=call_kwargs,
+        num_retries=num_retries,
+        retry_backoff=retry_backoff,
+        has_tenacity=has_tenacity,
+    )
 
     if hasattr(resp, "usage") and resp.usage:
         total_prompt_tokens += getattr(resp.usage, "prompt_tokens", 0) or 0
@@ -217,7 +276,12 @@ def _invoke_completion_with_validation(
 
         retry_kwargs = dict(call_kwargs)
         retry_kwargs["messages"] = messages
-        retry_resp = litellm.completion(**retry_kwargs)
+        retry_resp = _execute_completion(
+            call_kwargs=retry_kwargs,
+            num_retries=num_retries,
+            retry_backoff=retry_backoff,
+            has_tenacity=has_tenacity,
+        )
 
         if hasattr(retry_resp, "usage") and retry_resp.usage:
             total_prompt_tokens += getattr(retry_resp.usage, "prompt_tokens", 0) or 0
@@ -245,6 +309,7 @@ def score_listing(
     prompt_version: str = "v1.0",
     fallback_model: Optional[str] = "ollama/qwen3.5:4b",
     local_api_base: Optional[str] = "http://localhost:11434",
+    local_timeout: float = 60.0,
     num_retries: int = 3,
     retry_backoff: float = 2.0,
     provider: str = "cloud",
@@ -265,7 +330,9 @@ def score_listing(
             temperature=temperature,
             api_base=local_api_base,
             num_retries=num_retries,
+            retry_backoff=retry_backoff,
             is_local=True,
+            timeout=local_timeout,
             prompt_version=prompt_version,
         )
 
@@ -277,7 +344,9 @@ def score_listing(
             temperature=temperature,
             api_base=None,
             num_retries=num_retries,
+            retry_backoff=retry_backoff,
             is_local=False,
+            timeout=local_timeout,
             prompt_version=prompt_version,
         )
     except Exception as primary_exc:
@@ -294,9 +363,12 @@ def score_listing(
                 temperature=temperature,
                 api_base=local_api_base,
                 num_retries=num_retries,
+                retry_backoff=retry_backoff,
                 is_local=True,
+                timeout=local_timeout,
                 prompt_version=prompt_version,
             )
+        raise primary_exc
         raise primary_exc
 
 
@@ -320,6 +392,7 @@ def run_scoring(
     primary_model = cfg.get("primary_model") or cfg.get("model", "gemini/gemini-2.5-flash")
     fallback_model = cfg.get("fallback_model", "ollama/qwen3.5:4b")
     local_api_base = cfg.get("local_api_base", "http://localhost:11434")
+    local_timeout = float(cfg.get("local_timeout", 60.0))
     num_retries = cfg.get("num_retries", 3)
     retry_backoff = cfg.get("retry_backoff", 2.0)
     max_attempts = cfg.get("max_attempts", 3)
@@ -369,6 +442,7 @@ def run_scoring(
                 prompt_version=prompt_version,
                 fallback_model=fallback_model,
                 local_api_base=local_api_base,
+                local_timeout=local_timeout,
                 num_retries=num_retries,
                 retry_backoff=retry_backoff,
                 provider=provider,

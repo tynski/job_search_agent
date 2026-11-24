@@ -76,6 +76,7 @@ scoring:
   primary_model: "gemini/gemini-2.5-flash"
   fallback_model: "ollama/qwen3.5:4b"
   local_api_base: "http://localhost:11434"
+  local_timeout: 60.0
   num_retries: 3
   retry_backoff: 2.0
   max_listings_per_run: 20

@@ -10,6 +10,7 @@ from agent.digest import format_digest_table
 from agent.models import Listing
 from agent.score import (
     FatalScoringError,
+    _execute_completion,
     _parse_and_validate_score_json,
     is_fatal_error,
     run_scoring,
@@ -583,6 +584,118 @@ def test_score_listing_passes_temperature_when_set(mock_completion):
     call_kwargs = mock_completion.call_args.kwargs
     assert call_kwargs.get("temperature") == 0.3
     assert call_kwargs.get("drop_params") is True
+
+
+@patch("litellm.completion")
+def test_score_listing_passes_local_timeout(mock_completion):
+    mock_completion.return_value = make_mock_response("""{
+        "score": 8.0,
+        "skills_match": 8.0,
+        "experience_fit": 8.0,
+        "role_fit": 8.0,
+        "gaps": [],
+        "reason": "Good."
+    }""")
+
+    listing = Listing(
+        id="test-local-timeout",
+        source="test",
+        title="Python Dev",
+        company="A",
+        location="Remote",
+        remote=True,
+        work_type="b2b",
+        salary=None,
+        description="Python",
+        url="",
+        posted_at="",
+    )
+
+    score_listing(
+        listing=listing,
+        resume_text="Resume",
+        profile_yaml_text="Profile",
+        model="gemini/gemini-2.5-flash",
+        fallback_model="ollama/qwen3.5:4b",
+        provider="local",
+        local_timeout=45.0,
+    )
+
+    assert mock_completion.call_count == 1
+    call_kwargs = mock_completion.call_args.kwargs
+    assert call_kwargs.get("timeout") == 45.0
+
+
+@patch("litellm.completion")
+def test_score_listing_fallback_passes_local_timeout(mock_completion):
+    err_503 = ServiceUnavailableError(
+        message="503 Service Unavailable",
+        model="gemini/gemini-2.5-flash",
+        llm_provider="gemini",
+    )
+    local_resp = make_mock_response("""{
+        "score": 7.5,
+        "skills_match": 7.5,
+        "experience_fit": 7.5,
+        "role_fit": 7.5,
+        "gaps": [],
+        "reason": "Fallback good."
+    }""")
+    mock_completion.side_effect = [err_503, local_resp]
+
+    listing = Listing(
+        id="test-fallback-timeout",
+        source="test",
+        title="Python Dev",
+        company="A",
+        location="Remote",
+        remote=True,
+        work_type="b2b",
+        salary=None,
+        description="Python",
+        url="",
+        posted_at="",
+    )
+
+    score_listing(
+        listing=listing,
+        resume_text="Resume",
+        profile_yaml_text="Profile",
+        model="gemini/gemini-2.5-flash",
+        fallback_model="ollama/qwen3.5:4b",
+        local_timeout=30.0,
+    )
+
+    assert mock_completion.call_count == 2
+    fallback_kwargs = mock_completion.call_args_list[1].kwargs
+    assert fallback_kwargs.get("timeout") == 30.0
+
+
+@patch("litellm.completion")
+def test_execute_completion_fallback_when_tenacity_fails(mock_completion):
+    tenacity_err = Exception("tenacity import failed please run `pip install tenacity`")
+    err_503 = ServiceUnavailableError(
+        message="503 Service Unavailable",
+        model="gemini/gemini-2.5-flash",
+        llm_provider="gemini",
+    )
+    good_resp = make_mock_response('{"score": 9.0}')
+    mock_completion.side_effect = [tenacity_err, err_503, good_resp]
+
+    kwargs = {
+        "model": "gemini/gemini-2.5-flash",
+        "messages": [{"role": "user", "content": "hi"}],
+        "num_retries": 3,
+        "retry_strategy": "exponential_backoff_retry",
+    }
+    resp = _execute_completion(
+        call_kwargs=kwargs,
+        num_retries=2,
+        retry_backoff=0.01,
+        has_tenacity=True,
+    )
+    assert resp == good_resp
+    assert mock_completion.call_count == 3
 
 
 def sqlite3_connect(path: Path):
