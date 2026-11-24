@@ -27,7 +27,7 @@ The agent runs as a sequential, multi-stage pipeline stored in a local SQLite da
                                |
                                v
  +-----------------------------------------------------------+
- | 3. LLM Scoring (LiteLLM: Gemini / Local Ollama Fallback)  |
+ | 3. LLM Scoring (LiteLLM: Gemini / Cloud LLM)              |
  +-----------------------------+-----------------------------+
                                |
                                v
@@ -44,7 +44,7 @@ The agent runs as a sequential, multi-stage pipeline stored in a local SQLite da
 1. **Profile Preparation**: Extracts verified skills, experience, and target roles from `data/resume.md` into `data/profile.yaml`.
 2. **Collection**: Fetches raw postings via public REST endpoints (JustJoinIT, NoFluffJobs) and deduplicates records into SQLite.
 3. **Rule-Based Filter**: Fast, zero-cost pre-filtering based on location, contract type, excluded titles/keywords, minimum salary, and required profile keywords.
-4. **LLM Scoring**: Passed listings are scored from 0 to 10 against the candidate's profile using LiteLLM (Google Gemini or local Ollama), returning subscores, missing skill gaps, and a concise reason. **Scoring strictly prioritizes the freshest offers first** (ordered by collection timestamp descending).
+4. **LLM Scoring**: Passed listings are scored from 0 to 10 against the candidate's profile using LiteLLM (Google Gemini or another cloud provider), returning subscores, missing skill gaps, and a concise reason. **Scoring strictly prioritizes the freshest offers first** (ordered by collection timestamp descending).
 5. **Terminal Digest**: Formats top-scored opportunities into an ASCII summary table, filtering out jobs you have already acted on.
 6. **Personal Tracking**: Built-in CLI tool to record application statuses (`new`, `shortlisted`, `applied`, `replied`, `rejected`) and personal notes.
 
@@ -54,7 +54,6 @@ The agent runs as a sequential, multi-stage pipeline stored in a local SQLite da
 
 - **Python**: `3.14` (also compatible with `3.11+`)
 - **Operating System**: Linux (tested on Ubuntu 24.04 / Debian)
-- **Optional**: [Ollama](https://ollama.com/) for local offline model inference (e.g. `qwen3.5:4b`)
 
 ---
 
@@ -107,11 +106,7 @@ Key configuration sections:
 | **`filter.exclude.titles`** | Job title substrings that trigger immediate rejection (e.g., `lead`, `manager`, `sales`, `intern`). |
 | **`filter.exclude.keywords`** | Description keywords that trigger rejection. |
 | **`filter.salary.min_pln`** | Minimum monthly salary in PLN. Set to `0` to disable. Missing salary data is never rejected. |
-| **`scoring.provider`** | Set to `"cloud"` to use external APIs, or `"local"` to run fully offline via Ollama. |
-| **`scoring.primary_model`** | LiteLLM model identifier for cloud scoring (e.g., `gemini/gemini-2.5-flash` or `gemini/gemini-3.5-flash-lite`). |
-| **`scoring.fallback_model`** | Model used automatically when the primary model fails or experiences service errors (e.g., `ollama/qwen3.5:4b`). |
-| **`scoring.local_api_base`** | Endpoint URL for the local inference server (default: `http://localhost:11434`). |
-| **`scoring.local_timeout`** | Timeout in seconds for local inference calls before aborting (default: `60.0`). |
+| **`scoring.model`** | LiteLLM model identifier for cloud scoring (default: `gemini/gemini-3.5-flash-lite`). |
 | **`scoring.temperature`** | Sampling temperature for the scoring model (default: `0.0` for deterministic, repeatable evaluation). |
 | **`scoring.seed`** | Random seed passed to the LLM for reproducibility (default: `42`). |
 | **`scoring.num_retries`** | Maximum exponential backoff retries for transient HTTP errors (429, 503). |

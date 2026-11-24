@@ -90,28 +90,19 @@ def load_scoring_config(config_path: Path | str = DEFAULT_CONFIG_PATH) -> dict[s
     seed_raw = scoring_cfg.get("seed", 42)
     seed = int(seed_raw) if seed_raw is not None else 42
 
-    provider = str(scoring_cfg.get("provider", "cloud")).lower()
-    primary_model = scoring_cfg.get("primary_model") or scoring_cfg.get("model", "gemini/gemini-2.5-flash")
-    fallback_model = scoring_cfg.get("fallback_model", "ollama/qwen3.5:4b")
-    local_api_base = scoring_cfg.get("local_api_base", "http://localhost:11434")
-    local_timeout = float(scoring_cfg.get("local_timeout", 60.0))
+    model = scoring_cfg.get("model") or scoring_cfg.get("primary_model", "gemini/gemini-3.5-flash-lite")
     num_retries = int(scoring_cfg.get("num_retries", 3))
     retry_backoff = float(scoring_cfg.get("retry_backoff", 2.0))
-
     max_attempts = int(scoring_cfg.get("max_attempts", 3))
 
     return {
-        "provider": provider,
-        "primary_model": primary_model,
-        "model": primary_model,  # Backwards compatibility
-        "fallback_model": fallback_model,
-        "local_api_base": local_api_base,
-        "local_timeout": local_timeout,
+        "model": model,
+        "primary_model": model,  # Backwards compatibility
+        "temperature": temperature,
+        "seed": seed,
         "num_retries": num_retries,
         "retry_backoff": retry_backoff,
         "max_attempts": max_attempts,
-        "temperature": temperature,
-        "seed": seed,
         "max_listings_per_run": int(scoring_cfg.get("max_listings_per_run", 20)),
         "prompt_version": str(scoring_cfg.get("prompt_version", "v1.1")),
         "top_n_digest": int(scoring_cfg.get("top_n_digest", 10)),

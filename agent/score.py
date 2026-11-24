@@ -185,29 +185,8 @@ def _execute_completion(
     call_kwargs: dict[str, Any],
     num_retries: int = 3,
     retry_backoff: float = 2.0,
-    has_tenacity: bool = True,
 ) -> Any:
-    """Execute litellm.completion with tenacity if present, or fallback python retry loop."""
-    if has_tenacity and num_retries > 0:
-        try:
-            return litellm.completion(**call_kwargs)
-        except Exception as exc:
-            # If litellm fails due to missing tenacity, fallback to python retry loop
-            if "tenacity" not in str(exc).lower():
-                raise
-            kwargs_without_retries = dict(call_kwargs)
-            kwargs_without_retries.pop("num_retries", None)
-            kwargs_without_retries.pop("retry_strategy", None)
-            return _execute_completion(
-                kwargs_without_retries,
-                num_retries=num_retries,
-                retry_backoff=retry_backoff,
-                has_tenacity=False,
-            )
-    elif num_retries <= 0:
-        return litellm.completion(**call_kwargs)
-
-    # Pure Python retry loop fallback when tenacity is absent
+    """Execute litellm.completion with exponential backoff on transient errors."""
     last_exc = None
     for attempt in range(num_retries + 1):
         try:
@@ -228,11 +207,8 @@ def _invoke_completion_with_validation(
     prompt: str,
     temperature: Optional[float] = 0.0,
     seed: Optional[int] = 42,
-    api_base: Optional[str] = None,
     num_retries: int = 3,
     retry_backoff: float = 2.0,
-    is_local: bool = False,
-    timeout: float = 60.0,
     prompt_version: str = "v1.1",
 ) -> tuple[dict[str, Any], int, int, float]:
     """Execute completion call with exponential retry for 503/429 and 1 retry on malformed JSON."""
@@ -241,40 +217,23 @@ def _invoke_completion_with_validation(
     total_completion_tokens = 0
     total_cost = 0.0
 
-    try:
-        import tenacity  # noqa: F401
-        has_tenacity = True
-    except ImportError:
-        has_tenacity = False
-
     call_kwargs: dict[str, Any] = {
         "model": model,
         "messages": messages,
         "response_format": {"type": "json_object"},
         "drop_params": True,
     }
-    if has_tenacity and num_retries > 0:
-        call_kwargs["num_retries"] = num_retries
-        call_kwargs["retry_strategy"] = "exponential_backoff_retry"
-    if api_base:
-        call_kwargs["api_base"] = api_base
     if temperature is not None:
         call_kwargs["temperature"] = temperature
         call_kwargs["allowed_openai_params"] = ["temperature"]
     if seed is not None:
         call_kwargs["seed"] = seed
-    if is_local:
-        call_kwargs["thinking"] = {"type": "disabled"}
-        call_kwargs["extra_body"] = {"thinking": False}
-        if timeout > 0:
-            call_kwargs["timeout"] = timeout
 
     # Attempt 1
     resp = _execute_completion(
         call_kwargs=call_kwargs,
         num_retries=num_retries,
         retry_backoff=retry_backoff,
-        has_tenacity=has_tenacity,
     )
 
     if hasattr(resp, "usage") and resp.usage:
@@ -309,7 +268,6 @@ def _invoke_completion_with_validation(
             call_kwargs=retry_kwargs,
             num_retries=num_retries,
             retry_backoff=retry_backoff,
-            has_tenacity=has_tenacity,
         )
 
         if hasattr(retry_resp, "usage") and retry_resp.usage:
@@ -337,71 +295,30 @@ def score_listing(
     temperature: Optional[float] = 0.0,
     seed: Optional[int] = 42,
     prompt_version: str = "v1.1",
-    fallback_model: Optional[str] = "ollama/qwen3.5:4b",
-    local_api_base: Optional[str] = "http://localhost:11434",
-    local_timeout: float = 60.0,
     num_retries: int = 3,
     retry_backoff: float = 2.0,
-    provider: str = "cloud",
 ) -> tuple[dict[str, Any], int, int, float]:
     """
-    Score a single listing.
-    Supports running fully local (provider='local') or cloud with fallback to local model.
-    Fatal config/auth errors immediately abort without fallback.
+    Score a single listing using cloud LLM via LiteLLM.
+    Transient errors retry automatically with exponential backoff.
+    Fatal config/auth errors immediately abort.
     """
     prompt = build_scoring_prompt(listing, resume_text, profile_yaml_text)
 
-    # 1. Fully local mode
-    if provider == "local":
-        active_model = fallback_model or model
-        return _invoke_completion_with_validation(
-            model=active_model,
-            prompt=prompt,
-            temperature=temperature,
-            seed=seed,
-            api_base=local_api_base,
-            num_retries=num_retries,
-            retry_backoff=retry_backoff,
-            is_local=True,
-            timeout=local_timeout,
-            prompt_version=prompt_version,
-        )
-
-    # 2. Cloud mode with fallback
     try:
         return _invoke_completion_with_validation(
             model=model,
             prompt=prompt,
             temperature=temperature,
             seed=seed,
-            api_base=None,
             num_retries=num_retries,
             retry_backoff=retry_backoff,
-            is_local=False,
-            timeout=local_timeout,
             prompt_version=prompt_version,
         )
-    except Exception as primary_exc:
-        # Fatal errors (404, 401, invalid model) abort immediately without fallback
-        if is_fatal_error(primary_exc):
-            raise FatalScoringError(f"Fatal error on primary model '{model}': {primary_exc}") from primary_exc
-
-        # Transient errors (503, 429, timeout, connection) fall back to local model if available
-        if fallback_model and fallback_model != model:
-            print(f"\n[Warning] Primary model '{model}' failed ({primary_exc}). Falling back to local model '{fallback_model}'...")
-            return _invoke_completion_with_validation(
-                model=fallback_model,
-                prompt=prompt,
-                temperature=temperature,
-                seed=seed,
-                api_base=local_api_base,
-                num_retries=num_retries,
-                retry_backoff=retry_backoff,
-                is_local=True,
-                timeout=local_timeout,
-                prompt_version=prompt_version,
-            )
-        raise primary_exc
+    except Exception as exc:
+        if is_fatal_error(exc):
+            raise FatalScoringError(f"Fatal error on model '{model}': {exc}") from exc
+        raise
 
 
 def run_scoring(
@@ -420,11 +337,7 @@ def run_scoring(
 
     cfg = load_scoring_config(config_path)
     prompt_version = cfg["prompt_version"]
-    provider = cfg.get("provider", "cloud")
-    primary_model = cfg.get("primary_model") or cfg.get("model", "gemini/gemini-2.5-flash")
-    fallback_model = cfg.get("fallback_model", "ollama/qwen3.5:4b")
-    local_api_base = cfg.get("local_api_base", "http://localhost:11434")
-    local_timeout = float(cfg.get("local_timeout", 60.0))
+    model = cfg.get("model", "gemini/gemini-3.5-flash-lite")
     num_retries = cfg.get("num_retries", 3)
     retry_backoff = cfg.get("retry_backoff", 2.0)
     max_attempts = cfg.get("max_attempts", 3)
@@ -449,7 +362,7 @@ def run_scoring(
 
     print(
         f"Found {len(unscored)} passed listing(s) to score "
-        f"(provider: {provider}, primary: {primary_model}, fallback: {fallback_model}, prompt_version: {prompt_version})."
+        f"(model: {model}, prompt_version: {prompt_version})."
     )
     if not unscored:
         if skipped_max_attempts > 0:
@@ -470,16 +383,12 @@ def run_scoring(
                 listing=listing,
                 resume_text=resume_text,
                 profile_yaml_text=profile_yaml_text,
-                model=primary_model,
+                model=model,
                 temperature=temperature,
                 seed=seed,
                 prompt_version=prompt_version,
-                fallback_model=fallback_model,
-                local_api_base=local_api_base,
-                local_timeout=local_timeout,
                 num_retries=num_retries,
                 retry_backoff=retry_backoff,
-                provider=provider,
             )
             # Only set status to 'scored' on valid parsed score
             save_score(source=listing.source, id=listing.id, score_data=score_data, db_path=db_path)

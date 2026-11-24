@@ -127,41 +127,39 @@ def test_score_listing_success(mock_cost, mock_completion):
     assert cost == 0.00015
     assert mock_completion.call_count == 1
     call_kwargs = mock_completion.call_args.kwargs
-    assert call_kwargs.get("num_retries") == 3
-    assert call_kwargs.get("retry_strategy") == "exponential_backoff_retry"
     assert call_kwargs.get("temperature") == 0.0
     assert call_kwargs.get("seed") == 42
     assert call_kwargs.get("allowed_openai_params") == ["temperature"]
 
 
 @patch("litellm.completion")
-def test_score_listing_503_then_fallback_to_local_model(mock_completion):
+def test_score_listing_503_retries_and_succeeds(mock_completion):
     err_503 = ServiceUnavailableError(
         message="503 Service Unavailable",
-        model="gemini/gemini-2.5-flash",
+        model="gemini/gemini-3.5-flash-lite",
         llm_provider="gemini",
     )
-    local_resp = make_mock_response("""{
-        "score": 7.8,
+    good_resp = make_mock_response("""{
+        "score": 8.0,
         "skills_match": 8.0,
-        "experience_fit": 7.5,
+        "experience_fit": 8.0,
         "role_fit": 8.0,
-        "gaps": ["dbt"],
-        "reason": "Scored via fallback local model."
+        "gaps": [],
+        "reason": "Recovered after retry."
     }""")
-    mock_completion.side_effect = [err_503, local_resp]
+    mock_completion.side_effect = [err_503, good_resp]
 
     listing = Listing(
-        id="test-fallback",
+        id="test-retry-503",
         source="justjoin_it",
         title="Python Engineer",
-        company="LocalCorp",
+        company="CloudCorp",
         location="Remote",
         remote=True,
         work_type="b2b",
         salary=None,
         description="Python and SQL",
-        url="https://example.com/fallback",
+        url="https://example.com/retry",
         posted_at="",
     )
 
@@ -169,62 +167,13 @@ def test_score_listing_503_then_fallback_to_local_model(mock_completion):
         listing=listing,
         resume_text="Resume",
         profile_yaml_text="Profile",
-        model="gemini/gemini-2.5-flash",
-        fallback_model="ollama/qwen3.5:4b",
-        local_api_base="http://localhost:11434",
+        model="gemini/gemini-3.5-flash-lite",
+        retry_backoff=0.01,
     )
 
     assert mock_completion.call_count == 2
-    fallback_kwargs = mock_completion.call_args_list[1].kwargs
-    assert fallback_kwargs["model"] == "ollama/qwen3.5:4b"
-    assert fallback_kwargs["api_base"] == "http://localhost:11434"
-    assert fallback_kwargs.get("thinking") == {"type": "disabled"}
-    assert score_data["score"] == 7.85
-    assert score_data["model"] == "ollama/qwen3.5:4b"
-
-
-@patch("litellm.completion")
-def test_score_listing_provider_local_direct(mock_completion):
-    local_resp = make_mock_response("""{
-        "score": 8.2,
-        "skills_match": 8.0,
-        "experience_fit": 8.5,
-        "role_fit": 8.0,
-        "gaps": [],
-        "reason": "Direct local scoring."
-    }""")
-    mock_completion.return_value = local_resp
-
-    listing = Listing(
-        id="test-local-direct",
-        source="test",
-        title="Python Dev",
-        company="A",
-        location="Remote",
-        remote=True,
-        work_type="b2b",
-        salary=None,
-        description="Python",
-        url="",
-        posted_at="",
-    )
-
-    score_data, _, _, _ = score_listing(
-        listing=listing,
-        resume_text="Resume",
-        profile_yaml_text="Profile",
-        model="gemini/gemini-2.5-flash",
-        fallback_model="ollama/qwen3.5:4b",
-        local_api_base="http://localhost:11434",
-        provider="local",
-    )
-
-    assert mock_completion.call_count == 1
-    call_kwargs = mock_completion.call_args.kwargs
-    assert call_kwargs["model"] == "ollama/qwen3.5:4b"
-    assert call_kwargs["api_base"] == "http://localhost:11434"
-    assert call_kwargs.get("thinking") == {"type": "disabled"}
-    assert score_data["score"] == 8.15
+    assert score_data["score"] == 8.0
+    assert score_data["model"] == "gemini/gemini-3.5-flash-lite"
 
 
 @patch("litellm.completion")
@@ -260,7 +209,6 @@ def test_score_listing_retries_on_invalid_json(mock_cost, mock_completion):
         resume_text="Resume",
         profile_yaml_text="Profile",
         model="gemini/gemini-2.5-flash",
-        fallback_model=None,
     )
 
     assert mock_completion.call_count == 2
@@ -363,8 +311,8 @@ def test_transient_error_continues_with_next_listing(mock_completion, tmp_path: 
         "gaps": [],
         "reason": "Success"
     }""")
-    # Listing 1 fails on primary and fallback, Listing 2 succeeds on primary
-    mock_completion.side_effect = [err_503, err_503, good_resp]
+    # Listing 1 fails after exhausting retries (4 503s: initial + 3 retries), Listing 2 succeeds
+    mock_completion.side_effect = [err_503, err_503, err_503, err_503, good_resp]
 
     db_file = tmp_path / "test_continue.db"
     init_db(db_file)
@@ -375,7 +323,8 @@ def test_transient_error_continues_with_next_listing(mock_completion, tmp_path: 
     update_listing_status("t", "1", "passed", db_path=db_file)
     update_listing_status("t", "2", "passed", db_path=db_file)
 
-    run_scoring(db_path=db_file, limit=2)
+    with patch("time.sleep"):
+        run_scoring(db_path=db_file, limit=2)
 
     with sqlite3_connect(db_file) as conn:
         cursor = conn.cursor()
@@ -541,7 +490,6 @@ def test_score_listing_no_temperature_when_unconfigured(mock_completion):
         profile_yaml_text="Profile",
         model="gemini/gemini-3.8-flash",
         temperature=None,
-        fallback_model=None,
     )
 
     assert mock_completion.call_count == 1
@@ -581,7 +529,6 @@ def test_score_listing_passes_temperature_when_set(mock_completion):
         profile_yaml_text="Profile",
         model="gemini/gemini-3.8-flash",
         temperature=0.3,
-        fallback_model=None,
     )
 
     assert mock_completion.call_count == 1
@@ -591,115 +538,26 @@ def test_score_listing_passes_temperature_when_set(mock_completion):
 
 
 @patch("litellm.completion")
-def test_score_listing_passes_local_timeout(mock_completion):
-    mock_completion.return_value = make_mock_response("""{
-        "score": 8.0,
-        "skills_match": 8.0,
-        "experience_fit": 8.0,
-        "role_fit": 8.0,
-        "gaps": [],
-        "reason": "Good."
-    }""")
-
-    listing = Listing(
-        id="test-local-timeout",
-        source="test",
-        title="Python Dev",
-        company="A",
-        location="Remote",
-        remote=True,
-        work_type="b2b",
-        salary=None,
-        description="Python",
-        url="",
-        posted_at="",
-    )
-
-    score_listing(
-        listing=listing,
-        resume_text="Resume",
-        profile_yaml_text="Profile",
-        model="gemini/gemini-2.5-flash",
-        fallback_model="ollama/qwen3.5:4b",
-        provider="local",
-        local_timeout=45.0,
-    )
-
-    assert mock_completion.call_count == 1
-    call_kwargs = mock_completion.call_args.kwargs
-    assert call_kwargs.get("timeout") == 45.0
-
-
-@patch("litellm.completion")
-def test_score_listing_fallback_passes_local_timeout(mock_completion):
-    err_503 = ServiceUnavailableError(
-        message="503 Service Unavailable",
-        model="gemini/gemini-2.5-flash",
-        llm_provider="gemini",
-    )
-    local_resp = make_mock_response("""{
-        "score": 7.5,
-        "skills_match": 7.5,
-        "experience_fit": 7.5,
-        "role_fit": 7.5,
-        "gaps": [],
-        "reason": "Fallback good."
-    }""")
-    mock_completion.side_effect = [err_503, local_resp]
-
-    listing = Listing(
-        id="test-fallback-timeout",
-        source="test",
-        title="Python Dev",
-        company="A",
-        location="Remote",
-        remote=True,
-        work_type="b2b",
-        salary=None,
-        description="Python",
-        url="",
-        posted_at="",
-    )
-
-    score_listing(
-        listing=listing,
-        resume_text="Resume",
-        profile_yaml_text="Profile",
-        model="gemini/gemini-2.5-flash",
-        fallback_model="ollama/qwen3.5:4b",
-        local_timeout=30.0,
-    )
-
-    assert mock_completion.call_count == 2
-    fallback_kwargs = mock_completion.call_args_list[1].kwargs
-    assert fallback_kwargs.get("timeout") == 30.0
-
-
-@patch("litellm.completion")
-def test_execute_completion_fallback_when_tenacity_fails(mock_completion):
-    tenacity_err = Exception("tenacity import failed please run `pip install tenacity`")
+def test_execute_completion_retries_transient_error(mock_completion):
     err_503 = ServiceUnavailableError(
         message="503 Service Unavailable",
         model="gemini/gemini-2.5-flash",
         llm_provider="gemini",
     )
     good_resp = make_mock_response('{"score": 9.0}')
-    mock_completion.side_effect = [tenacity_err, err_503, good_resp]
+    mock_completion.side_effect = [err_503, good_resp]
 
     kwargs = {
         "model": "gemini/gemini-2.5-flash",
         "messages": [{"role": "user", "content": "hi"}],
-        "num_retries": 3,
-        "retry_strategy": "exponential_backoff_retry",
     }
     resp = _execute_completion(
         call_kwargs=kwargs,
         num_retries=2,
         retry_backoff=0.01,
-        has_tenacity=True,
     )
     assert resp == good_resp
-    assert mock_completion.call_count == 3
+    assert mock_completion.call_count == 2
 
 
 def test_parse_and_validate_score_json_overwrites_with_formula():
@@ -746,7 +604,6 @@ def test_score_listing_seed_and_temp_defaults(mock_completion):
         resume_text="Resume",
         profile_yaml_text="Profile",
         model="gemini/gemini-3.5-flash-lite",
-        fallback_model=None,
     )
 
     assert mock_completion.call_count == 1
