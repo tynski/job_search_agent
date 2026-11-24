@@ -37,7 +37,8 @@ def test_parse_and_validate_score_json_valid():
         "reason": "Strong match for Python ETL and cloud requirements."
     }"""
     data = _parse_and_validate_score_json(sample)
-    assert data["score"] == 8.5
+    # Deterministically computed: (0.4 * 8.0) + (0.3 * 8.5) + (0.3 * 9.0) = 8.45
+    assert data["score"] == 8.45
     assert data["skills_match"] == 8.0
     assert data["gaps"] == ["Snowflake", "dbt"]
     assert "Python ETL" in data["reason"]
@@ -119,7 +120,7 @@ def test_score_listing_success(mock_cost, mock_completion):
         model="gemini/gemini-2.5-flash",
     )
 
-    assert score_data["score"] == 9.0
+    assert score_data["score"] == 9.05
     assert score_data["skills_match"] == 9.5
     assert p_tokens == 250
     assert c_tokens == 80
@@ -128,6 +129,9 @@ def test_score_listing_success(mock_cost, mock_completion):
     call_kwargs = mock_completion.call_args.kwargs
     assert call_kwargs.get("num_retries") == 3
     assert call_kwargs.get("retry_strategy") == "exponential_backoff_retry"
+    assert call_kwargs.get("temperature") == 0.0
+    assert call_kwargs.get("seed") == 42
+    assert call_kwargs.get("allowed_openai_params") == ["temperature"]
 
 
 @patch("litellm.completion")
@@ -175,7 +179,7 @@ def test_score_listing_503_then_fallback_to_local_model(mock_completion):
     assert fallback_kwargs["model"] == "ollama/qwen3.5:4b"
     assert fallback_kwargs["api_base"] == "http://localhost:11434"
     assert fallback_kwargs.get("thinking") == {"type": "disabled"}
-    assert score_data["score"] == 7.8
+    assert score_data["score"] == 7.85
     assert score_data["model"] == "ollama/qwen3.5:4b"
 
 
@@ -220,7 +224,7 @@ def test_score_listing_provider_local_direct(mock_completion):
     assert call_kwargs["model"] == "ollama/qwen3.5:4b"
     assert call_kwargs["api_base"] == "http://localhost:11434"
     assert call_kwargs.get("thinking") == {"type": "disabled"}
-    assert score_data["score"] == 8.2
+    assert score_data["score"] == 8.15
 
 
 @patch("litellm.completion")
@@ -260,7 +264,7 @@ def test_score_listing_retries_on_invalid_json(mock_cost, mock_completion):
     )
 
     assert mock_completion.call_count == 2
-    assert score_data["score"] == 7.5
+    assert score_data["score"] == 7.55
     assert score_data["gaps"] == ["dbt"]
 
 
@@ -696,6 +700,62 @@ def test_execute_completion_fallback_when_tenacity_fails(mock_completion):
     )
     assert resp == good_resp
     assert mock_completion.call_count == 3
+
+
+def test_parse_and_validate_score_json_overwrites_with_formula():
+    """Even if LLM generates a mathematically wrong score, Python re-computes it deterministically."""
+    sample = """{
+        "score": 4.0,
+        "skills_match": 8.0,
+        "experience_fit": 9.0,
+        "role_fit": 8.5,
+        "gaps": [],
+        "reason": "Test exact calculation."
+    }"""
+    data = _parse_and_validate_score_json(sample)
+    # (0.4 * 8.0) + (0.3 * 8.5) + (0.3 * 9.0) = 3.2 + 2.55 + 2.7 = 8.45
+    assert data["score"] == 8.45
+
+
+@patch("litellm.completion")
+def test_score_listing_seed_and_temp_defaults(mock_completion):
+    mock_completion.return_value = make_mock_response("""{
+        "skills_match": 8.0,
+        "experience_fit": 8.0,
+        "role_fit": 8.0,
+        "gaps": [],
+        "reason": "Deterministic."
+    }""")
+
+    listing = Listing(
+        id="test-defaults",
+        source="test",
+        title="Python Dev",
+        company="A",
+        location="Remote",
+        remote=True,
+        work_type="b2b",
+        salary=None,
+        description="Python",
+        url="",
+        posted_at="",
+    )
+
+    score_data, _, _, _ = score_listing(
+        listing=listing,
+        resume_text="Resume",
+        profile_yaml_text="Profile",
+        model="gemini/gemini-3.5-flash-lite",
+        fallback_model=None,
+    )
+
+    assert mock_completion.call_count == 1
+    call_kwargs = mock_completion.call_args.kwargs
+    assert call_kwargs.get("temperature") == 0.0
+    assert call_kwargs.get("seed") == 42
+    assert call_kwargs.get("allowed_openai_params") == ["temperature"]
+    assert score_data["score"] == 8.0
+    assert score_data["prompt_version"] == "v1.1"
 
 
 def sqlite3_connect(path: Path):

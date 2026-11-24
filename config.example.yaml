@@ -77,9 +77,11 @@ scoring:
   fallback_model: "ollama/qwen3.5:4b"
   local_api_base: "http://localhost:11434"
   local_timeout: 60.0
+  temperature: 0.0
+  seed: 42
   num_retries: 3
   retry_backoff: 2.0
   max_listings_per_run: 20
   max_attempts: 3
-  prompt_version: "v1.0"
+  prompt_version: "v1.1"
   top_n_digest: 10

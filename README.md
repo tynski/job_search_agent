@@ -112,6 +112,8 @@ Key configuration sections:
 | **`scoring.fallback_model`** | Model used automatically when the primary model fails or experiences service errors (e.g., `ollama/qwen3.5:4b`). |
 | **`scoring.local_api_base`** | Endpoint URL for the local inference server (default: `http://localhost:11434`). |
 | **`scoring.local_timeout`** | Timeout in seconds for local inference calls before aborting (default: `60.0`). |
+| **`scoring.temperature`** | Sampling temperature for the scoring model (default: `0.0` for deterministic, repeatable evaluation). |
+| **`scoring.seed`** | Random seed passed to the LLM for reproducibility (default: `42`). |
 | **`scoring.num_retries`** | Maximum exponential backoff retries for transient HTTP errors (429, 503). |
 | **`scoring.retry_backoff`** | Backoff multiplier in seconds between retries. |
 | **`scoring.max_listings_per_run`** | Maximum passed listings to evaluate per scoring run. |

@@ -101,22 +101,31 @@ Description:
 ### RULES & CONSTRAINTS:
 1. Strict source of truth: compare ONLY against the candidate's verified experience in the resume and profile. NEVER invent or assume skills, tools, or years of experience.
 2. Scoring rubric (0.0 to 10.0 scale):
-   - skills_match (0.0 - 10.0): Match with Python, SQL, ETL, Cloud (Azure/AWS), REST APIs, Pytest, Data modelling, etc.
-   - experience_fit (0.0 - 10.0): Candidate has ~4.5 years mid-to-senior software/data engineering experience.
-   - role_fit (0.0 - 10.0): Alignment with Solutions Engineer, AI/Applied ML, Data Engineer, or customer-facing technical delivery.
-   - score (0.0 - 10.0): Overall weighted match score: (0.4 * skills_match) + (0.3 * role_fit) + (0.3 * experience_fit).
+   - skills_match (0.0 - 10.0):
+     * 9.0 - 10.0: Strong match with candidate's primary stack (Python, SQL, ETL, Cloud Azure/AWS, REST APIs, Pytest).
+     * 7.0 - 8.5: Matches primary language/framework, but lacks secondary required tools (e.g., Docker, dbt, Snowflake).
+     * 4.0 - 6.5: Partial skill match; core stack differs or missing multiple essential technologies.
+     * 0.0 - 3.5: Minimal or no relevant technical overlap.
+   - experience_fit (0.0 - 10.0):
+     * The candidate has ~4.5 years of experience (Mid-to-Senior level).
+     * 8.0 - 9.5: Candidate meets or exceeds the required experience level (Junior, Mid, Regular ~0-5 years) — fully capable of executing the work. Exceeding requirements is a positive fit, never a disqualifier.
+     * 7.0 - 8.0: Senior level (~5+ years) where candidate's ~4.5 years is a close stretch.
+     * 1.0 - 3.0: Lead / Principal / Director (>8-10 years) where candidate lacks required depth.
+   - role_fit (0.0 - 10.0):
+     * 8.0 - 10.0: Core target engineering roles (Python Engineer, Solutions Engineer, Data Engineer, Applied AI, ETL), regardless of junior/regular level.
+     * 6.0 - 7.5: Adjacent technical delivery or cloud roles.
+     * 0.0 - 4.0: Unrelated specializations (Frontend, Mobile, QA, Sales, Management).
    - gaps: Array of strings representing specific required technologies, tools, or domain experience that the candidate lacks.
    - reason: Exactly one concise sentence explaining the score and key match/gap factor.
 3. You must respond with a SINGLE valid JSON object ONLY. No markdown wrapper, no conversational preamble, no trailing text.
 
 Expected JSON format:
 {{
-  "score": 8.5,
   "skills_match": 8.0,
   "experience_fit": 9.0,
   "role_fit": 8.5,
-  "gaps": ["Snowflake", "dbt"],
-  "reason": "Strong match for Python ETL and cloud requirements; minor gap in dbt."
+  "gaps": ["Docker"],
+  "reason": "Strong Python skills and exceeds experience requirements; minor gap in Docker."
 }}
 """
 
@@ -133,7 +142,7 @@ def _parse_and_validate_score_json(raw_text: str) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError("Response is not a JSON object")
 
-    required_numeric = ["score", "skills_match", "experience_fit", "role_fit"]
+    required_numeric = ["skills_match", "experience_fit", "role_fit"]
     for key in required_numeric:
         if key not in data:
             raise ValueError(f"Missing required numeric field: '{key}'")
@@ -144,6 +153,22 @@ def _parse_and_validate_score_json(raw_text: str) -> dict[str, Any]:
             data[key] = round(val, 2)
         except (TypeError, ValueError) as e:
             raise ValueError(f"Invalid value for '{key}': {e}")
+
+    if "score" in data:
+        try:
+            raw_score = float(data["score"])
+            if not (0.0 <= raw_score <= 10.0):
+                raise ValueError(f"Field 'score' ({raw_score}) is out of range 0.0 - 10.0")
+        except (TypeError, ValueError) as e:
+            if "out of range" in str(e):
+                raise
+            raise ValueError(f"Invalid value for 'score': {e}")
+
+    # Deterministic weighted composite calculation: (0.4 * skills_match) + (0.3 * role_fit) + (0.3 * experience_fit)
+    data["score"] = round(
+        (0.4 * data["skills_match"]) + (0.3 * data["role_fit"]) + (0.3 * data["experience_fit"]),
+        2,
+    )
 
     if "gaps" not in data or not isinstance(data["gaps"], list):
         raise ValueError("Missing or invalid 'gaps' array")
@@ -201,13 +226,14 @@ def _execute_completion(
 def _invoke_completion_with_validation(
     model: str,
     prompt: str,
-    temperature: Optional[float] = None,
+    temperature: Optional[float] = 0.0,
+    seed: Optional[int] = 42,
     api_base: Optional[str] = None,
     num_retries: int = 3,
     retry_backoff: float = 2.0,
     is_local: bool = False,
     timeout: float = 60.0,
-    prompt_version: str = "v1.0",
+    prompt_version: str = "v1.1",
 ) -> tuple[dict[str, Any], int, int, float]:
     """Execute completion call with exponential retry for 503/429 and 1 retry on malformed JSON."""
     messages = [{"role": "user", "content": prompt}]
@@ -234,6 +260,9 @@ def _invoke_completion_with_validation(
         call_kwargs["api_base"] = api_base
     if temperature is not None:
         call_kwargs["temperature"] = temperature
+        call_kwargs["allowed_openai_params"] = ["temperature"]
+    if seed is not None:
+        call_kwargs["seed"] = seed
     if is_local:
         call_kwargs["thinking"] = {"type": "disabled"}
         call_kwargs["extra_body"] = {"thinking": False}
@@ -305,8 +334,9 @@ def score_listing(
     resume_text: str,
     profile_yaml_text: str,
     model: str,
-    temperature: Optional[float] = None,
-    prompt_version: str = "v1.0",
+    temperature: Optional[float] = 0.0,
+    seed: Optional[int] = 42,
+    prompt_version: str = "v1.1",
     fallback_model: Optional[str] = "ollama/qwen3.5:4b",
     local_api_base: Optional[str] = "http://localhost:11434",
     local_timeout: float = 60.0,
@@ -328,6 +358,7 @@ def score_listing(
             model=active_model,
             prompt=prompt,
             temperature=temperature,
+            seed=seed,
             api_base=local_api_base,
             num_retries=num_retries,
             retry_backoff=retry_backoff,
@@ -342,6 +373,7 @@ def score_listing(
             model=model,
             prompt=prompt,
             temperature=temperature,
+            seed=seed,
             api_base=None,
             num_retries=num_retries,
             retry_backoff=retry_backoff,
@@ -361,6 +393,7 @@ def score_listing(
                 model=fallback_model,
                 prompt=prompt,
                 temperature=temperature,
+                seed=seed,
                 api_base=local_api_base,
                 num_retries=num_retries,
                 retry_backoff=retry_backoff,
@@ -368,7 +401,6 @@ def score_listing(
                 timeout=local_timeout,
                 prompt_version=prompt_version,
             )
-        raise primary_exc
         raise primary_exc
 
 
@@ -396,7 +428,8 @@ def run_scoring(
     num_retries = cfg.get("num_retries", 3)
     retry_backoff = cfg.get("retry_backoff", 2.0)
     max_attempts = cfg.get("max_attempts", 3)
-    temperature = cfg.get("temperature")
+    temperature = cfg.get("temperature", 0.0)
+    seed = cfg.get("seed", 42)
     max_batch = limit if limit is not None else cfg["max_listings_per_run"]
 
     resume_text = load_text(resume_path)
@@ -439,6 +472,7 @@ def run_scoring(
                 profile_yaml_text=profile_yaml_text,
                 model=primary_model,
                 temperature=temperature,
+                seed=seed,
                 prompt_version=prompt_version,
                 fallback_model=fallback_model,
                 local_api_base=local_api_base,
