@@ -12,7 +12,6 @@
 
 ## Ideas (not decided)
 - Lightweight Machine Learning alternative for local scoring (e.g. embeddings + cross-encoder / semantic similarity or scikit-learn classifier for fast, zero-cost ranking without running slow LLMs on CPU)
-- Score batches of 3-5 listings per request
 - handle mulitjob functionality - architecture
 
 ## Done
