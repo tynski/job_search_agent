@@ -1,0 +1,31 @@
+{
+  "limit": 10,
+  "offset": 0,
+  "totalFound": 2,
+  "content": [
+    {
+      "id": "8122334455",
+      "uuid": "9d9a8b7c-1234-5678-9abc-def012345678",
+      "name": "Senior Python Engineer",
+      "releasedDate": "2026-11-01T10:00:00.000Z",
+      "location": {
+        "city": "Gdańsk",
+        "region": "Pomorskie",
+        "country": "PL",
+        "remote": false
+      },
+      "ref": "https://api.smartrecruiters.com/v1/companies/fictionalco/postings/8122334455"
+    },
+    {
+      "id": "8122334456",
+      "uuid": "8a8a8b7c-1234-5678-9abc-def012345679",
+      "name": "DevOps Engineer (remote)",
+      "releasedDate": "2026-11-02T10:00:00.000Z",
+      "location": {
+        "city": "Remote",
+        "country": "remote"
+      },
+      "ref": "https://api.smartrecruiters.com/v1/companies/fictionalco/postings/8122334456"
+    }
+  ]
+}

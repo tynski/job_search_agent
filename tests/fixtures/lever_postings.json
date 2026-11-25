@@ -1,0 +1,15 @@
+[
+  {
+    "id": "5ac21346-8e0c-4494-8e7a-3eb92ff77902",
+    "text": "Data Engineer",
+    "categories": {
+      "location": "Poland",
+      "allLocations": ["Poland"],
+      "team": "Platform"
+    },
+    "hostedUrl": "https://jobs.lever.co/fictionalco/5ac21346-8e0c-4494-8e7a-3eb92ff77902",
+    "descriptionPlain": "Build and maintain ETL pipelines with Python.",
+    "workplaceType": "unspecified",
+    "createdAt": "2026-11-15T09:00:00Z"
+  }
+]

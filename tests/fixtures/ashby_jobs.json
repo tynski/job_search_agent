@@ -1,0 +1,16 @@
+{
+  "apiVersion": "1",
+  "jobs": [
+    {
+      "title": "Solutions Engineer",
+      "location": "Kraków, Poland",
+      "department": "Sales",
+      "isRemote": false,
+      "workplaceType": "OnSite",
+      "descriptionHtml": "<p>Help customers deploy our platform.</p>",
+      "descriptionPlain": "Help customers deploy our platform.",
+      "publishedAt": "2026-11-10T10:00:00Z",
+      "jobUrl": "https://jobs.ashbyhq.com/fictionalco/c1f0d2a3"
+    }
+  ]
+}

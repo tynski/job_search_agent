@@ -1,0 +1,28 @@
+{
+  "jobs": [
+    {
+      "id": 150293821,
+      "internal_job_id": 148001233,
+      "title": "Senior Data Engineer",
+      "updated_at": "2026-11-20T12:00:00.000Z",
+      "location": {
+        "name": "Warszawa, Poland"
+      },
+      "absolute_url": "https://boards.greenhouse.io/vaulttec/jobs/150293821",
+      "content": "<p>Join the data platform team. Python, SQL, and cloud pipelines.</p>"
+    },
+    {
+      "id": 150293822,
+      "title": "Junior Backend Engineer",
+      "updated_at": "2026-11-21T09:30:00.000Z",
+      "location": {
+        "name": "Remote"
+      },
+      "absolute_url": "https://boards.greenhouse.io/vaulttec/jobs/150293822",
+      "content": "<p>Junior backend role; remote work allowed.</p>"
+    }
+  ],
+  "meta": {
+    "total": 2
+  }
+}
