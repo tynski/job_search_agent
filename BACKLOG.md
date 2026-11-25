@@ -1,6 +1,7 @@
 # Backlog
 
 ## Now
+- [ ] CLI does not have help, what are the flags?
 - [ ] garbage collection - delete records older than 30 days
 
 ## Next
