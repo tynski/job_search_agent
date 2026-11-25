@@ -1,7 +1,7 @@
 # Backlog
 
 ## Now
-- [ ] CLI does not have help, what are the flags?
+- [ ] CLI does not have help, what are the flags? I want to use specific source
 - [ ] garbage collection - delete records older than 30 days
 
 ## Next
