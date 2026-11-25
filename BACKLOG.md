@@ -5,7 +5,7 @@
 - [ ] garbage collection - delete records older than 30 days
 
 ## Next
-- [ ] More sources (research public API alternatives; pracuj.pl and theprotocol.it blocked by Cloudflare Turnstile 403)
+- [ ] More sources (research public API alternatives; pracuj.pl and theprotocol.it blocked by Cloudflare Turnstile 403; Adzuna skipped — paid)
 
 ## Later
 - [ ] simple UI
@@ -20,3 +20,4 @@
 - [x] make match easier to identify and write in CLI - maybe id or short name?
 - [x] Delete Hacker News collector from code, tests, and documentation
 - [x] Switch to cloud-only LLM scoring (removed slow local CPU Ollama setup)
+- [x] Add company_boards collector (Greenhouse, Lever, Ashby, SmartRecruiters)

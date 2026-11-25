@@ -108,3 +108,39 @@ def load_scoring_config(config_path: Path | str = DEFAULT_CONFIG_PATH) -> dict[s
         "top_n_digest": int(scoring_cfg.get("top_n_digest", 10)),
     }
 
+
+VALID_ATS_VENDORS = {"greenhouse", "lever", "ashby", "smartrecruiters"}
+
+
+def load_companies_config(config_path: Path | str = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
+    """Load companies board list, company_boards collector settings, and location filter rules."""
+    config_data = load_yaml(config_path)
+    raw_companies = config_data.get("companies") or []
+    companies: list[dict[str, Any]] = []
+
+    if isinstance(raw_companies, list):
+        for entry in raw_companies:
+            if not isinstance(entry, dict):
+                continue
+            name = str(entry.get("name") or "").strip()
+            ats = str(entry.get("ats") or "").strip().lower()
+            board_id = str(entry.get("board_id") or "").strip()
+            region = str(entry.get("region") or "").strip().lower() or None
+            if name and ats and board_id:
+                companies.append({
+                    "name": name,
+                    "ats": ats,
+                    "board_id": board_id,
+                    "region": region,
+                })
+
+    cb_cfg = config_data.get("collectors", {}).get("company_boards", {})
+    filter_cfg = config_data.get("filter", {})
+
+    return {
+        "companies": companies,
+        "request_delay": float(cb_cfg.get("request_delay", 1.5)),
+        "cooldown_hours": float(cb_cfg.get("cooldown_hours", 12.0)),
+        "location_filter": filter_cfg.get("location", {}),
+    }
+

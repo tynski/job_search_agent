@@ -1,6 +1,19 @@
 # Example configuration for job_search_agent
 # Copy to config.yaml to customize.
 
+companies:
+  - name: "Acme AI"
+    ats: "greenhouse"
+    board_id: "acme-ai"
+  - name: "Nordic Data"
+    ats: "lever"
+    board_id: "nordic-data"
+
+collectors:
+  company_boards:
+    request_delay: 1.5
+    cooldown_hours: 12
+
 filter:
   location:
     allowed_countries_and_cities:

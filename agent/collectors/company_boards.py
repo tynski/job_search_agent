@@ -14,7 +14,7 @@ from typing import Any, Optional
 import requests
 
 from agent.collectors.base import BaseCollector
-from agent.config import load_companies_config
+from agent.config import DEFAULT_CONFIG_PATH, load_companies_config
 from agent.models import Listing
 from agent.storage import (
     DEFAULT_DB_PATH,
@@ -54,7 +54,7 @@ class CompanyBoardsCollector(BaseCollector):
         timeout: int = 15,
         force: bool = False,
     ):
-        self.config_path = config_path
+        self.config_path = config_path or DEFAULT_CONFIG_PATH
         self.db_path = Path(db_path) if db_path else DEFAULT_DB_PATH
         self.timeout = timeout
         self.force = force

@@ -1,6 +1,7 @@
 """SQLite storage and deduplication for job listings."""
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 import shutil
 import sqlite3
@@ -87,6 +88,15 @@ def init_db(db_path: Path | str = DEFAULT_DB_PATH) -> None:
         for col_name, col_type in new_columns.items():
             if col_name not in existing_cols:
                 cursor.execute(f"ALTER TABLE listings ADD COLUMN {col_name} {col_type}")
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS collector_runs (
+                source TEXT PRIMARY KEY,
+                last_run_at TEXT NOT NULL
+            )
+            """
+        )
         conn.commit()
 
 
@@ -188,20 +198,122 @@ def migrate_bad_scored_listings(db_path: Path | str = DEFAULT_DB_PATH) -> int:
         return count
 
 
+def get_last_collector_run(
+    source: str, db_path: Path | str = DEFAULT_DB_PATH
+) -> Optional[str]:
+    """Return ISO-8601 UTC timestamp of the last recorded run for a collector, or None."""
+    init_db(db_path)
+    with get_db_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT last_run_at FROM collector_runs WHERE source = ?",
+            (source,),
+        )
+        row = cursor.fetchone()
+        return row["last_run_at"] if row else None
+
+
+def record_collector_run(
+    source: str,
+    db_path: Path | str = DEFAULT_DB_PATH,
+    run_at: Optional[str] = None,
+) -> None:
+    """Record the latest collector run timestamp (UTC ISO-8601)."""
+    init_db(db_path)
+    ts = run_at or datetime.now(timezone.utc).isoformat()
+    with get_db_connection(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO collector_runs (source, last_run_at)
+            VALUES (?, ?)
+            ON CONFLICT(source) DO UPDATE SET last_run_at = excluded.last_run_at
+            """,
+            (source, ts),
+        )
+        conn.commit()
+
+
+def normalize_url(url: Optional[str]) -> str:
+    """Normalize a listing URL for deduplication."""
+    if not url:
+        return ""
+    return url.strip().rstrip("/").lower()
+
+
+def normalize_title_company(title: Optional[str], company: Optional[str]) -> tuple[str, str]:
+    """Normalize title and company pair for deduplication."""
+    norm_title = " ".join((title or "").strip().lower().split())
+    norm_company = " ".join((company or "").strip().lower().split())
+    return norm_title, norm_company
+
+
+def fetch_dedup_index(db_path: Path | str = DEFAULT_DB_PATH) -> dict[str, Any]:
+    """Return existing (source, id) keys, normalized URLs, and (title, company) -> sources map."""
+    init_db(db_path)
+    keys: set[tuple[str, str]] = set()
+    urls: set[str] = set()
+    title_company_sources: dict[tuple[str, str], set[str]] = {}
+
+    with get_db_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT source, id, url, title, company FROM listings")
+        for row in cursor.fetchall():
+            src = row["source"]
+            keys.add((src, row["id"]))
+            norm_u = normalize_url(row["url"])
+            if norm_u:
+                urls.add(norm_u)
+            tc = normalize_title_company(row["title"], row["company"])
+            if tc[0] and tc[1]:
+                title_company_sources.setdefault(tc, set()).add(src)
+
+    return {
+        "keys": keys,
+        "urls": urls,
+        "title_company_sources": title_company_sources,
+    }
+
+
 def save_listings(
     listings: list[Listing], db_path: Path | str = DEFAULT_DB_PATH
 ) -> tuple[int, int]:
     """
-    Save listings to SQLite with deduplication on (source, id).
+    Save listings to SQLite with deduplication on (source, id), non-empty URL,
+    and normalized (title, company) across sources (and within company:* boards).
     Returns (inserted_count, duplicate_count).
     """
     init_db(db_path)
     inserted = 0
     duplicates = 0
 
+    dedup = fetch_dedup_index(db_path)
+    seen_keys: set[tuple[str, str]] = dedup["keys"]
+    seen_urls: set[str] = dedup["urls"]
+    tc_sources: dict[tuple[str, str], set[str]] = dedup["title_company_sources"]
+
     with get_db_connection(db_path) as conn:
         cursor = conn.cursor()
         for listing in listings:
+            key = (listing.source, listing.id)
+            norm_u = normalize_url(listing.url)
+            tc = normalize_title_company(listing.title, listing.company)
+
+            is_pk_dupe = key in seen_keys
+            is_url_dupe = bool(norm_u and norm_u in seen_urls)
+            existing_tc_srcs = tc_sources.get(tc, ())
+            is_tc_dupe = bool(
+                tc[0]
+                and tc[1]
+                and (
+                    any(s != listing.source for s in existing_tc_srcs)
+                    or (listing.source.startswith("company:") and listing.source in existing_tc_srcs)
+                )
+            )
+
+            if is_pk_dupe or is_url_dupe or is_tc_dupe:
+                duplicates += 1
+                continue
+
             cursor.execute(
                 """
                 INSERT OR IGNORE INTO listings (
@@ -225,6 +337,11 @@ def save_listings(
             )
             if cursor.rowcount > 0:
                 inserted += 1
+                seen_keys.add(key)
+                if norm_u:
+                    seen_urls.add(norm_u)
+                if tc[0] and tc[1]:
+                    tc_sources.setdefault(tc, set()).add(listing.source)
             else:
                 duplicates += 1
         conn.commit()
