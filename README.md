@@ -117,7 +117,7 @@ Key configuration sections:
 | **`scoring.top_n_digest`** | Default number of listings displayed in the terminal digest. |
 
 > [!NOTE]
-> **Listing Sources**: Collectors are currently active for JustJoinIT and NoFluffJobs. Enabling/disabling individual sources via config is slated in the roadmap.
+> **Listing Sources**: Collectors are currently active for JustJoinIT, NoFluffJobs, and Company Boards (Greenhouse, Lever, Ashby, SmartRecruiters). Enabling/disabling individual sources via config is slated in the roadmap.
 > **Waves / Depth**: Ingesting older listings in sequential waves is currently tracked in [BACKLOG.md](BACKLOG.md).
 
 ### 3. Candidate Profile (`profile.yaml`)
@@ -153,6 +153,34 @@ mkdir -p data
 > - `*.db` and `*.bak` files
 > 
 > Never commit these files to version control.
+
+### 5. Company Boards (Public ATS Boards)
+
+Companies listed on Greenhouse, Lever, Ashby, or SmartRecruiters expose their public job board as JSON. Add them under `companies:` in `config.yaml`:
+
+```yaml
+companies:
+  - name: "Acme AI"
+    ats: "greenhouse"   # greenhouse | lever | ashby | smartrecruiters
+    board_id: "acme-ai"
+```
+
+**How to find the board ID** — look at the URL of the company's careers page:
+
+| ATS | Careers page URL | Example `board_id` |
+| :--- | :--- | :--- |
+| Greenhouse | `https://boards.greenhouse.io/<board_id>` | `vaulttec` from `https://boards.greenhouse.io/vaulttec` |
+| Lever | `https://jobs.lever.co/<board_id>` | `leverdemo` from `https://jobs.lever.co/leverdemo` |
+| Ashby | `https://jobs.ashbyhq.com/<board_id>` | `Ashby` from `https://jobs.ashbyhq.com/Ashby` |
+| SmartRecruiters | `https://careers.smartrecruiters.com/<id>` | `smartrecruiters` from `https://careers.smartrecruiters.com/smartrecruiters` |
+
+Run only this collector:
+
+```bash
+.venv/bin/python -m agent.collect --source company_boards
+```
+
+Notes: at most one run per day per collector (skip with `--force` to bypass); collect uses the config's location rules (Poland or remote EU).
 
 ---
 
