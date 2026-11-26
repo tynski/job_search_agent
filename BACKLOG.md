@@ -2,12 +2,14 @@
 
 ## Now
 - [ ] job boards functionality not working
-- [ ] CLI does not have help, what are the flags? I want to use specific source
+- [ ] CLI does not have help, what are the flags?
 - [ ] garbage collection - delete records older than 30 days
 
 ## Next
 - [ ] Refactor all code, check tests coverage, remove sensitive information from code
 - [ ] add Airbitenow
+- [ ] consider adding erecuiter
+- [ ] sources gives duplicated remote listings, dedup if job is remote and description mostly covers itself
 
 ## Later
 - [ ] deploy solution to production, make it stand alone CLI
