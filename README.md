@@ -17,7 +17,7 @@ The agent runs as a sequential, multi-stage pipeline stored in a local SQLite da
                                |
                                v
  +-----------------------------------------------------------+
- | 1. Collect (JustJoinIT, NoFluffJobs -> DB)                |
+ | 1. Collect (JustJoinIT, NoFluffJobs, job boards -> DB)                |
  +-----------------------------+-----------------------------+
                                |
                                v
@@ -42,7 +42,7 @@ The agent runs as a sequential, multi-stage pipeline stored in a local SQLite da
 ```
 
 1. **Profile Preparation**: Extracts verified skills, experience, and target roles from `data/resume.md` into `data/profile.yaml`.
-2. **Collection**: Fetches raw postings via public REST endpoints (JustJoinIT, NoFluffJobs) and deduplicates records into SQLite.
+2. **Collection**: Fetches raw postings via public REST endpoints and deduplicates records into SQLite.
 3. **Rule-Based Filter**: Fast, zero-cost pre-filtering based on location, contract type, excluded titles/keywords, minimum salary, and required profile keywords.
 4. **LLM Scoring**: Passed listings are scored from 0 to 10 against the candidate's profile using LiteLLM (Google Gemini or another cloud provider), returning subscores, missing skill gaps, and a concise reason. **Scoring strictly prioritizes the freshest offers first** (ordered by collection timestamp descending).
 5. **Terminal Digest**: Formats top-scored opportunities into an ASCII summary table, filtering out jobs you have already acted on.
@@ -227,33 +227,6 @@ python -m agent.run
   - Rule filtering updates evaluated rows to `passed` or `rejected`.
   - Newly scored offers are assigned numeric scores, gap analysis, and reasons.
   - If a newly scored fresh offer achieves a higher match score than older listings, it immediately appears on the top digest leaderboard.
-
----
-
-## Local Model Option (Ollama)
-
-You can run the scoring step completely locally without cloud API keys:
-
-1. **Install Ollama**:
-   ```bash
-   curl -fsSL https://ollama.com/install.sh | sh
-   ```
-2. **Pull a Model**:
-   ```bash
-   ollama pull qwen3.5:4b
-   ```
-3. **Configure in `config.yaml`**:
-   ```yaml
-   scoring:
-     provider: "local"
-     fallback_model: "ollama/qwen3.5:4b"
-     local_api_base: "http://localhost:11434"
-   ```
-4. **Automatic Cloud Fallback**:
-   If `provider: "cloud"` is kept, the agent automatically falls back to your local Ollama instance if the cloud provider encounters persistent 503 or 429 errors.
-
-> [!TIP]
-> Running local LLMs on CPU is significantly slower than cloud APIs. For CPU-only setups, use small quantized models (e.g., 3B-4B parameters) and set `--limit 5` when evaluating batches.
 
 ---
 
