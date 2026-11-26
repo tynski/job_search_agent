@@ -5,10 +5,10 @@ SmartRecruiters (no login, no API key) for companies configured under the
 ``companies`` key of config.yaml.
 """
 
-import logging
-import time
 from datetime import datetime, timezone
+import logging
 from pathlib import Path
+import time
 from typing import Any, Optional
 
 import requests
@@ -45,7 +45,6 @@ class CompanyBoardsCollector(BaseCollector):
     SMARTRECRUITERS_POSTINGS_URL = (
         "https://api.smartrecruiters.com/v1/companies/{board_id}/postings"
     )
-    LEVER_PAGE_SIZE = 100
 
     def __init__(
         self,
@@ -67,67 +66,70 @@ class CompanyBoardsCollector(BaseCollector):
 
     # ---- HTTP (politeness: User-Agent header, delay between requests) ----
 
-    def _get_json(self, url: str, params: Optional[dict[str, Any]] = None) -> Optional[Any]:
+    def _get_json(
+        self,
+        url: str,
+        params: Optional[dict[str, Any]] = None,
+        company: str = "",
+        ats: str = "",
+    ) -> Optional[Any]:
         headers = {"User-Agent": USER_AGENT}
+        context = f"[{company} ({ats})] " if (company or ats) else ""
         try:
             resp = requests.get(url, params=params, headers=headers, timeout=self.timeout)
         except requests.RequestException as exc:
-            logger.warning("company_boards: request failed for %s: %s", url, exc)
+            logger.warning("company_boards: %srequest failed for %s: %s", context, url, exc)
             return None
         if resp.status_code != 200:
-            if resp.status_code == 404:
-                logger.warning("company_boards: board not found: %s", url)
-            else:
-                logger.warning(
-                    "company_boards: HTTP %s for %s", resp.status_code, url
-                )
+            logger.warning(
+                "company_boards: %sHTTP %s for %s", context, resp.status_code, url
+            )
             return None
         try:
             return resp.json()
         except ValueError:
-            logger.warning("company_boards: invalid JSON from %s", url)
+            logger.warning("company_boards: %sinvalid JSON from %s", context, url)
             return None
 
-    def _fetch_greenhouse(self, board_id: str) -> list[dict[str, Any]]:
+    def _fetch_greenhouse(self, board_id: str, company: str = "") -> list[dict[str, Any]]:
         data = self._get_json(
-            self.GREENHOUSE_JOBS_URL.format(board_id=board_id), params={"content": "true"}
+            self.GREENHOUSE_JOBS_URL.format(board_id=board_id),
+            params={"content": "true"},
+            company=company,
+            ats="greenhouse",
         )
         return data.get("jobs", []) if isinstance(data, dict) else []
 
-    def _fetch_lever(self, board_id: str) -> list[dict[str, Any]]:
-        url = self.LEVER_POSTINGS_URL.format(board_id=board_id)
-        postings: list[dict[str, Any]] = []
-        skip = 0
-        while True:
-            data = self._get_json(
-                url,
-                params={
-                    "mode": "json",
-                    "skip": skip,
-                    "limit": self.LEVER_PAGE_SIZE,
-                },
-            )
-            if not isinstance(data, list) or not data:
-                break
-            postings.extend(data)
-            if len(data) < self.LEVER_PAGE_SIZE:
-                break
-            skip += len(data)
-            time.sleep(self.request_delay)
-        return postings
+    def _fetch_lever(self, board_id: str, company: str = "") -> list[dict[str, Any]]:
+        # Lever returns all active postings by default when mode=json is requested in a single call
+        data = self._get_json(
+            self.LEVER_POSTINGS_URL.format(board_id=board_id),
+            params={"mode": "json"},
+            company=company,
+            ats="lever",
+        )
+        return data if isinstance(data, list) else []
 
-    def _fetch_ashby(self, board_id: str) -> list[dict[str, Any]]:
+    def _fetch_ashby(self, board_id: str, company: str = "") -> list[dict[str, Any]]:
         data = self._get_json(
             self.ASHBY_JOBS_URL.format(board_id=board_id),
             params={"includeCompensation": "true"},
+            company=company,
+            ats="ashby",
         )
         return data.get("jobs", []) if isinstance(data, dict) else []
 
-    def _fetch_smartrecruiters(self, board_id: str) -> list[dict[str, Any]]:
-        data = self._get_json(self.SMARTRECRUITERS_POSTINGS_URL.format(board_id=board_id))
+    def _fetch_smartrecruiters(self, board_id: str, company: str = "") -> list[dict[str, Any]]:
+        # Request maximum page size of 100 to avoid default 10-item truncation
+        data = self._get_json(
+            self.SMARTRECRUITERS_POSTINGS_URL.format(board_id=board_id),
+            params={"limit": 100},
+            company=company,
+            ats="smartrecruiters",
+        )
         return data.get("content", []) if isinstance(data, dict) else []
 
-    def _fetch(self, ats: str, board_id: str) -> list[dict[str, Any]]:
+    def _fetch(self, ats: str, board_id: str, company: str = "") -> list[dict[str, Any]]:
         fetchers = {
             "greenhouse": self._fetch_greenhouse,
             "lever": self._fetch_lever,
@@ -136,9 +138,9 @@ class CompanyBoardsCollector(BaseCollector):
         }
         fetcher = fetchers.get(ats)
         if fetcher is None:
-            logger.warning("company_boards: unsupported ATS %r", ats)
+            logger.warning("company_boards: [%s] unsupported ATS %r", company, ats)
             return []
-        return fetcher(board_id)
+        return fetcher(board_id, company=company)
 
     # ---- Normalization to the shared Listing schema ----
 
@@ -146,17 +148,33 @@ class CompanyBoardsCollector(BaseCollector):
     def normalize_greenhouse(job: dict[str, Any], company: str) -> Optional[Listing]:
         location_data = job.get("location") or {}
         location = str(location_data.get("name") or "")
+        offices = job.get("offices") or []
+        office_names = [
+            str(o.get("name") or o.get("location") or "")
+            for o in offices
+            if isinstance(o, dict)
+        ]
+        office_names = [o for o in office_names if o]
+
+        all_locations = [location] if location else []
+        for oname in office_names:
+            if oname and oname not in all_locations:
+                all_locations.append(oname)
+        display_location = ", ".join(all_locations) if all_locations else location
+
         url = str(job.get("absolute_url") or "")
         title = str(job.get("title") or "")
         if not url or not title:
             return None
+
+        is_remote = "remote" in display_location.lower()
         return Listing(
             id=str(job.get("id") or url),
             source=f"company:{company}",
             title=title,
             company=company,
-            location=location,
-            remote="remote" in location.lower(),
+            location=display_location,
+            remote=is_remote,
             work_type=None,
             salary=None,
             description=str(job.get("content") or ""),
@@ -171,22 +189,56 @@ class CompanyBoardsCollector(BaseCollector):
         all_locations = categories.get("allLocations") or []
         if not location and all_locations:
             location = str(all_locations[0])
+        country = str(posting.get("country") or "")
+        if country and country.lower() not in location.lower():
+            location = f"{location}, {country}" if location else country
+
+        workplace_type = str(posting.get("workplaceType") or "").lower()
+        remote = workplace_type == "remote" or "remote" in location.lower()
+
         url = str(posting.get("hostedUrl") or "")
         title = str(posting.get("text") or "")
         if not url or not title:
             return None
+
+        # Build full description: intro paragraph + list sections (duties, tech stack, requirements) + closing
+        desc_parts: list[str] = []
+        desc_plain = str(posting.get("descriptionPlain") or "").strip()
+        if desc_plain:
+            desc_parts.append(desc_plain)
+        lists = posting.get("lists") or []
+        for item in lists:
+            if isinstance(item, dict):
+                hdr = str(item.get("text") or "").strip()
+                content = str(item.get("content") or "").strip()
+                if hdr:
+                    desc_parts.append(f"\n{hdr}")
+                if content:
+                    desc_parts.append(content)
+        additional = str(posting.get("additionalPlain") or "").strip()
+        if additional:
+            desc_parts.append(f"\n{additional}")
+        description = "\n".join(desc_parts)
+
+        # Parse createdAt timestamp (Lever returns epoch ms as int)
+        created_at = posting.get("createdAt")
+        if isinstance(created_at, (int, float)) and created_at > 0:
+            posted_at = datetime.fromtimestamp(created_at / 1000.0, tz=timezone.utc).isoformat()
+        else:
+            posted_at = str(created_at or "")
+
         return Listing(
             id=str(posting.get("id") or url),
             source=f"company:{company}",
             title=title,
             company=company,
             location=location,
-            remote="remote" in location.lower(),
+            remote=remote,
             work_type=None,
             salary=None,
-            description=str(posting.get("descriptionPlain") or ""),
+            description=description,
             url=url,
-            posted_at=str(posting.get("createdAt") or ""),
+            posted_at=posted_at,
         )
 
     @staticmethod
@@ -195,18 +247,38 @@ class CompanyBoardsCollector(BaseCollector):
         title = str(job.get("title") or "")
         if not url or not title:
             return None
-        location = str(job.get("location") or "")
+
+        # Primary location + secondary locations
+        primary_loc = str(job.get("location") or "")
         postal = ((job.get("address") or {}).get("postalAddress") or {})
-        if not location and postal.get("addressLocality"):
-            location = str(postal["addressLocality"])
+        if not primary_loc and postal.get("addressLocality"):
+            primary_loc = str(postal["addressLocality"])
+
+        sec_locs: list[str] = []
+        for sec in job.get("secondaryLocations") or []:
+            if isinstance(sec, dict) and sec.get("location"):
+                sec_locs.append(str(sec["location"]))
+
+        all_locations = [primary_loc] if primary_loc else []
+        for sloc in sec_locs:
+            if sloc and sloc not in all_locations:
+                all_locations.append(sloc)
+        location = "; ".join(all_locations) if all_locations else primary_loc
+
+        workplace_type = str(job.get("workplaceType") or "").lower()
+        remote = bool(job.get("isRemote")) or workplace_type == "remote" or "remote" in location.lower()
+
+        # Ashby provides unique UUID job id
+        job_id = str(job.get("id") or job.get("jobUrl") or title)
+
         return Listing(
-            id=str(job.get("jobUrl") or job.get("title")),
+            id=job_id,
             source=f"company:{company}",
             title=title,
             company=company,
             location=location,
-            remote=bool(job.get("isRemote")) or "remote" in location.lower(),
-            work_type=None,
+            remote=remote,
+            work_type=str(job.get("employmentType") or "") or None,
             salary=None,
             description=str(job.get("descriptionPlain") or ""),
             url=url,
@@ -214,42 +286,68 @@ class CompanyBoardsCollector(BaseCollector):
         )
 
     @staticmethod
-    def normalize_smartrecruiters(posting: dict[str, Any], company: str) -> Optional[Listing]:
-        url = str(posting.get("ref") or "")
+    def normalize_smartrecruiters(
+        posting: dict[str, Any], company: str, board_id: str = ""
+    ) -> Optional[Listing]:
+        posting_id = str(posting.get("id") or "")
         title = str(posting.get("name") or "")
-        if not url or not title:
+        if not title:
             return None
+
+        # Build public job posting URL: https://jobs.smartrecruiters.com/{company_identifier}/{posting_id}
+        comp_info = posting.get("company") or {}
+        comp_id = str(comp_info.get("identifier") or board_id or "")
+        if comp_id and posting_id:
+            url = f"https://jobs.smartrecruiters.com/{comp_id}/{posting_id}"
+        else:
+            url = str(posting.get("ref") or "")
+        if not url:
+            return None
+
         location_data = posting.get("location") or {}
-        location = str(location_data.get("city") or "")
-        if location_data.get("region"):
-            location = f"{location}, {location_data['region']}" if location else str(
-                location_data["region"]
-            )
+        city = str(location_data.get("city") or "")
+        region = str(location_data.get("region") or "")
+        country = str(location_data.get("country") or "")
+        full_location = str(location_data.get("fullLocation") or "")
+
+        loc_parts = [p for p in (city, region, country) if p]
+        location = full_location or ", ".join(loc_parts)
+
+        remote = (
+            bool(location_data.get("remote"))
+            or country.lower() == "remote"
+            or "remote" in location.lower()
+        )
+
+        type_of_emp = posting.get("typeOfEmployment") or {}
+        work_type = str(type_of_emp.get("label") or type_of_emp.get("id") or "") or None
+
         return Listing(
-            id=str(posting.get("id") or url),
+            id=posting_id or url,
             source=f"company:{company}",
             title=title,
             company=company,
             location=location,
-            remote=bool(location_data.get("remote")) or "remote" in location.lower(),
-            work_type=None,
+            remote=remote,
+            work_type=work_type,
             salary=None,
             description="",  # not included in the SmartRecruiters list endpoint
             url=url,
             posted_at=str(posting.get("releasedDate") or ""),
         )
 
-    def _normalize(self, ats: str, raw: dict[str, Any], company: str) -> Optional[Listing]:
-        normalizers = {
-            "greenhouse": self.normalize_greenhouse,
-            "lever": self.normalize_lever,
-            "ashby": self.normalize_ashby,
-            "smartrecruiters": self.normalize_smartrecruiters,
-        }
-        normalizer = normalizers.get(ats)
-        if normalizer is None:
-            return None
-        return normalizer(raw, company)
+    def _normalize(
+        self, ats: str, raw: dict[str, Any], company: str, board_id: str = ""
+    ) -> Optional[Listing]:
+        if ats == "greenhouse":
+            return self.normalize_greenhouse(raw, company)
+        if ats == "lever":
+            return self.normalize_lever(raw, company)
+        if ats == "ashby":
+            return self.normalize_ashby(raw, company)
+        if ats == "smartrecruiters":
+            return self.normalize_smartrecruiters(raw, company, board_id=board_id)
+        return None
 
     # ---- Location rules from config (Poland or remote EU) ----
 
@@ -292,6 +390,10 @@ class CompanyBoardsCollector(BaseCollector):
 
     def collect(self) -> list[Listing]:
         if self._cooldown_active():
+            print(
+                f"\n[company_boards] Cooldown active: last run was less than {self.cooldown_hours:.1f}h ago. "
+                f"Skipping run (use --force to bypass)."
+            )
             logger.info(
                 "company_boards: last run less than %.1f h ago; skipping.",
                 self.cooldown_hours,
@@ -307,16 +409,18 @@ class CompanyBoardsCollector(BaseCollector):
             ats = str(company.get("ats") or "").strip().lower()
             board_id = str(company.get("board_id") or "")
 
-            raw_entries = self._fetch(ats, board_id)
+            raw_entries = self._fetch(ats, board_id, company=name)
             if not raw_entries:
                 logger.warning(
-                    "company_boards: company %r (%s) board %r returned no postings or 404; continuing",
-                    name, ats, board_id,
+                    "company_boards: [%s (%s)] board %r returned no postings or was not found; continuing",
+                    name,
+                    ats,
+                    board_id,
                 )
                 continue
 
             for raw in raw_entries:
-                listing = self._normalize(ats, raw, name)
+                listing = self._normalize(ats, raw, name, board_id=board_id)
                 if listing is None:
                     continue
                 if not self._matches_location(listing, self.location_filter):

@@ -1,5 +1,5 @@
 {
-  "limit": 10,
+  "limit": 100,
   "offset": 0,
   "totalFound": 2,
   "content": [
@@ -8,11 +8,19 @@
       "uuid": "9d9a8b7c-1234-5678-9abc-def012345678",
       "name": "Senior Python Engineer",
       "releasedDate": "2026-11-01T10:00:00.000Z",
+      "company": {
+        "identifier": "fictionalco",
+        "name": "Fictional Co"
+      },
       "location": {
         "city": "Gdańsk",
         "region": "Pomorskie",
-        "country": "PL",
-        "remote": false
+        "country": "pl",
+        "remote": false,
+        "fullLocation": "Gdańsk, Pomorskie, Poland"
+      },
+      "typeOfEmployment": {
+        "label": "Full-time"
       },
       "ref": "https://api.smartrecruiters.com/v1/companies/fictionalco/postings/8122334455"
     },
@@ -21,9 +29,15 @@
       "uuid": "8a8a8b7c-1234-5678-9abc-def012345679",
       "name": "DevOps Engineer (remote)",
       "releasedDate": "2026-11-02T10:00:00.000Z",
+      "company": {
+        "identifier": "fictionalco",
+        "name": "Fictional Co"
+      },
       "location": {
         "city": "Remote",
-        "country": "remote"
+        "country": "pl",
+        "remote": true,
+        "fullLocation": "Remote, Poland"
       },
       "ref": "https://api.smartrecruiters.com/v1/companies/fictionalco/postings/8122334456"
     }

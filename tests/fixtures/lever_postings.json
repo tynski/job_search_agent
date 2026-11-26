@@ -9,7 +9,15 @@
     },
     "hostedUrl": "https://jobs.lever.co/fictionalco/5ac21346-8e0c-4494-8e7a-3eb92ff77902",
     "descriptionPlain": "Build and maintain ETL pipelines with Python.",
-    "workplaceType": "unspecified",
-    "createdAt": "2026-11-15T09:00:00Z"
+    "additionalPlain": "Meaningful projects and great benefits.",
+    "lists": [
+      {
+        "text": "Requirements",
+        "content": "<li>At least 3 years with Python and SQL</li>"
+      }
+    ],
+    "workplaceType": "remote",
+    "country": "PL",
+    "createdAt": 1763197200000
   }
 ]

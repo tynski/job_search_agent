@@ -2,8 +2,20 @@
   "apiVersion": "1",
   "jobs": [
     {
+      "id": "c1f0d2a3-1111-2222-3333-444455556666",
       "title": "Solutions Engineer",
       "location": "Kraków, Poland",
+      "secondaryLocations": [
+        {
+          "location": "Warszawa, Poland",
+          "address": {
+            "postalAddress": {
+              "addressCountry": "Poland",
+              "addressLocality": "Warszawa"
+            }
+          }
+        }
+      ],
       "department": "Sales",
       "isRemote": false,
       "workplaceType": "OnSite",

@@ -84,17 +84,23 @@ def test_lever_normalize():
     listing = CompanyBoardsCollector.normalize_lever(_load("lever_postings.json")[0], "FictionalCo")
     assert listing.source == "company:FictionalCo"
     assert listing.title == "Data Engineer"
-    assert listing.location == "Poland"
-    assert listing.remote is False
+    assert "Poland" in listing.location
+    assert listing.remote is True
     assert listing.url == "https://jobs.lever.co/fictionalco/5ac21346-8e0c-4494-8e7a-3eb92ff77902"
     assert "ETL pipelines" in listing.description
+    assert "Requirements" in listing.description
+    assert "At least 3 years with Python and SQL" in listing.description
+    assert "Meaningful projects" in listing.description
+    assert listing.posted_at.startswith("202")
 
 
 def test_ashby_normalize():
     listing = CompanyBoardsCollector.normalize_ashby(_load("ashby_jobs.json")["jobs"][0], "AshbyCo")
     assert listing.source == "company:AshbyCo"
+    assert listing.id == "c1f0d2a3-1111-2222-3333-444455556666"
     assert listing.title == "Solutions Engineer"
-    assert listing.location == "Kraków, Poland"
+    assert "Kraków, Poland" in listing.location
+    assert "Warszawa, Poland" in listing.location
     assert listing.remote is False
     assert listing.url == "https://jobs.ashbyhq.com/fictionalco/c1f0d2a3"
     assert "deploy our platform" in listing.description
@@ -104,10 +110,13 @@ def test_smartrecruiters_normalize():
     posting = _load("smartrecruiters_postings.json")["content"][0]
     listing = CompanyBoardsCollector.normalize_smartrecruiters(posting, "SR Co")
     assert listing.source == "company:SR Co"
+    assert listing.id == "8122334455"
     assert listing.title == "Senior Python Engineer"
-    assert listing.location == "Gdańsk, Pomorskie"
+    assert listing.location == "Gdańsk, Pomorskie, Poland"
     assert listing.remote is False
-    assert listing.url == "https://api.smartrecruiters.com/v1/companies/fictionalco/postings/8122334455"
+    assert listing.url == "https://jobs.smartrecruiters.com/fictionalco/8122334455"
+    assert listing.work_type == "Full-time"
+
     remote_posting = _load("smartrecruiters_postings.json")["content"][1]
     assert CompanyBoardsCollector.normalize_smartrecruiters(remote_posting, "SR Co").remote is True
 
@@ -269,3 +278,102 @@ def test_collect_records_run(tmp_path, monkeypatch):
     collector = CompanyBoardsCollector(config_path=config, db_path=db_path)
     collector.collect()
     assert get_last_collector_run("company_boards", db_path=db_path)
+
+
+# ---- Regression tests for fixed issues ----
+
+def test_regression_lever_epoch_ms_and_lists():
+    raw = {
+        "id": "lever-123",
+        "text": "Backend Engineer",
+        "hostedUrl": "https://jobs.lever.co/acme/lever-123",
+        "descriptionPlain": "Main intro text.",
+        "lists": [
+            {"text": "Requirements:", "content": "<li>Python 3.14</li>"}
+        ],
+        "additionalPlain": "Perks: remote budget.",
+        "categories": {"location": "Remote"},
+        "workplaceType": "remote",
+        "createdAt": 1784036580795,
+    }
+    listing = CompanyBoardsCollector.normalize_lever(raw, "Acme")
+    assert listing.id == "lever-123"
+    assert "Main intro text." in listing.description
+    assert "Requirements:" in listing.description
+    assert "<li>Python 3.14</li>" in listing.description
+    assert "Perks: remote budget." in listing.description
+    assert listing.remote is True
+    assert listing.posted_at.startswith("202")
+
+
+def test_regression_ashby_id_and_secondary_locations():
+    raw = {
+        "id": "ashby-uuid-999",
+        "title": "Data Platform Engineer",
+        "jobUrl": "https://jobs.ashbyhq.com/acme/ashby-uuid-999",
+        "location": "Berlin",
+        "secondaryLocations": [{"location": "Warszawa, Poland"}],
+        "isRemote": False,
+        "workplaceType": "Hybrid",
+        "employmentType": "FullTime",
+        "descriptionPlain": "Platform engineering role.",
+        "publishedAt": "2026-11-20T00:00:00Z",
+    }
+    listing = CompanyBoardsCollector.normalize_ashby(raw, "Acme")
+    assert listing.id == "ashby-uuid-999"
+    assert "Warszawa, Poland" in listing.location
+    assert listing.work_type == "FullTime"
+
+
+def test_regression_smartrecruiters_public_url_and_limit_100(tmp_path, monkeypatch):
+    calls = {}
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        calls.update({"url": url, "params": params})
+        return FakeResponse(200, {"content": []})
+
+    monkeypatch.setattr("agent.collectors.company_boards.requests.get", fake_get)
+    collector = CompanyBoardsCollector(config_path=_write_config(tmp_path, []))
+    collector._fetch_smartrecruiters("inpost", company="InPost")
+
+    assert calls["params"] == {"limit": 100}
+
+    # Public careers URL check
+    raw_sr = {
+        "id": "7440001099",
+        "name": "DevOps Engineer",
+        "company": {"identifier": "InPost"},
+        "location": {"city": "Kraków", "country": "pl", "remote": False},
+        "ref": "https://api.smartrecruiters.com/v1/companies/InPost/postings/7440001099",
+        "releasedDate": "2026-11-20T00:00:00Z",
+    }
+    listing = CompanyBoardsCollector.normalize_smartrecruiters(raw_sr, "InPost")
+    assert listing.url == "https://jobs.smartrecruiters.com/InPost/7440001099"
+    assert "Kraków" in listing.location
+    assert "pl" in listing.location
+
+
+def test_regression_non_fatal_warning_logs_company_and_ats(tmp_path, monkeypatch, caplog):
+    caplog.set_level(logging.WARNING)
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        if "failco" in url:
+            return FakeResponse(500)
+        return FakeResponse(200, _load("greenhouse_jobs.json"))
+
+    monkeypatch.setattr("agent.collectors.company_boards.requests.get", fake_get)
+    config = _write_config(
+        tmp_path,
+        [
+            {"name": "FailCo", "ats": "greenhouse", "board_id": "failco"},
+            {"name": "GoodCo", "ats": "greenhouse", "board_id": "goodco"},
+        ],
+    )
+    collector = CompanyBoardsCollector(config_path=config, db_path=tmp_path / "jobs.db")
+    listings = collector.collect()
+
+    assert len(listings) == 2
+    assert all(l.source == "company:GoodCo" for l in listings)
+    # Ensure log record mentions company and ATS
+    warning_records = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("FailCo" in msg and "greenhouse" in msg and "500" in msg for msg in warning_records)
