@@ -1,19 +1,22 @@
 # Backlog
 
 ## Now
+- [ ] job boards functionality not working
 - [ ] CLI does not have help, what are the flags? I want to use specific source
 - [ ] garbage collection - delete records older than 30 days
 
 ## Next
-- [ ] More sources (research public API alternatives; pracuj.pl and theprotocol.it blocked by Cloudflare Turnstile 403; Adzuna skipped — paid)
+- [ ] Refactor all code, check tests coverage, remove sensitive information from code
+- [ ] add Airbitenow
 
 ## Later
-- [ ] simple UI
+- [ ] deploy solution to production, make it stand alone CLI
 - [ ] mail or telegram digest
 
 ## Ideas (not decided)
 - Lightweight Machine Learning alternative for local scoring (e.g. embeddings + cross-encoder / semantic similarity or scikit-learn classifier for fast, zero-cost ranking without running slow LLMs on CPU)
 - handle mulitjob functionality - architecture
+- simple UI
 
 ## Done
 - [x] Add README.md, describe how to use agent
