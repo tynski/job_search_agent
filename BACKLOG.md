@@ -2,13 +2,13 @@
 
 ## Now
 - [ ] CLI does not have help, what are the flags?
+- [ ] --all flag for agent.track set should be just after set
 - [ ] garbage collection - delete records older than 30 days
 
 ## Next
 - [ ] Refactor all code, check tests coverage, remove sensitive information from code
 - [ ] add Airbitenow
 - [ ] consider adding erecuiter
-- [ ] sources gives duplicated remote listings, dedup if job is remote and description mostly covers itself
 
 ## Later
 - [ ] deploy solution to production, make it stand alone CLI
@@ -20,6 +20,7 @@
 - simple UI
 
 ## Done
+- [x] Deduplicate remote listings with near-identical descriptions across sources before LLM scoring
 - [x] Add README.md, describe how to use agent
 - [x] make match easier to identify and write in CLI - maybe id or short name?
 - [x] Delete Hacker News collector from code, tests, and documentation

@@ -17,6 +17,8 @@ class Listing:
     description: str
     url: str
     posted_at: str
+    duplicate_of: Optional[str] = None
+    similarity_score: Optional[float] = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

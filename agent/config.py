@@ -144,3 +144,16 @@ def load_companies_config(config_path: Path | str = DEFAULT_CONFIG_PATH) -> dict
         "location_filter": filter_cfg.get("location", {}),
     }
 
+
+def load_dedup_config(config_path: Path | str = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
+    """Load duplicate detection settings."""
+    config_data = load_yaml(config_path)
+    dedup_cfg = config_data.get("dedup") or {}
+    return {
+        "enabled": bool(dedup_cfg.get("enabled", True)),
+        "only_remote": bool(dedup_cfg.get("only_remote", True)),
+        "similarity_threshold": float(dedup_cfg.get("similarity_threshold", 0.85)),
+        "shingle_size": int(dedup_cfg.get("shingle_size", 5)),
+    }
+
+

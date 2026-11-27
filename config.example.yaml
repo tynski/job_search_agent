@@ -94,3 +94,10 @@ scoring:
   max_attempts: 3
   prompt_version: "v1.1"
   top_n_digest: 10
+
+dedup:
+  enabled: true
+  only_remote: true
+  similarity_threshold: 0.85
+  shingle_size: 5
+

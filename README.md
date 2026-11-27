@@ -17,7 +17,7 @@ The agent runs as a sequential, multi-stage pipeline stored in a local SQLite da
                                |
                                v
  +-----------------------------------------------------------+
- | 1. Collect (JustJoinIT, NoFluffJobs, job boards -> DB)                |
+ | 1. Collect (JustJoinIT, NoFluffJobs, company boards -> DB)|
  +-----------------------------+-----------------------------+
                                |
                                v
@@ -27,26 +27,32 @@ The agent runs as a sequential, multi-stage pipeline stored in a local SQLite da
                                |
                                v
  +-----------------------------------------------------------+
- | 3. LLM Scoring (LiteLLM: Gemini / Cloud LLM)              |
+ | 3. Duplicate Detection (Hashing & 5-gram Jaccard Dedup)   |
  +-----------------------------+-----------------------------+
                                |
                                v
  +-----------------------------------------------------------+
- | 4. Terminal Digest (Ranked matches, gaps, reasons)        |
+ | 4. LLM Scoring (LiteLLM: Gemini / Cloud LLM)              |
  +-----------------------------+-----------------------------+
                                |
                                v
  +-----------------------------------------------------------+
- | 5. Personal Tracking (shortlisted, applied, replied, ...)  |
+ | 5. Terminal Digest (Ranked matches, gaps, duplicate URLs) |
+ +-----------------------------+-----------------------------+
+                               |
+                               v
+ +-----------------------------------------------------------+
+ | 6. Personal Tracking (shortlisted, applied, replied, ...)  |
  +-----------------------------------------------------------+
 ```
 
 1. **Profile Preparation**: Extracts verified skills, experience, and target roles from `data/resume.md` into `data/profile.yaml`.
 2. **Collection**: Fetches raw postings via public REST endpoints and deduplicates records into SQLite.
 3. **Rule-Based Filter**: Fast, zero-cost pre-filtering based on location, contract type, excluded titles/keywords, minimum salary, and required profile keywords.
-4. **LLM Scoring**: Passed listings are scored from 0 to 10 against the candidate's profile using LiteLLM (Google Gemini or another cloud provider), returning subscores, missing skill gaps, and a concise reason. **Scoring strictly prioritizes the freshest offers first** (ordered by collection timestamp descending).
-5. **Terminal Digest**: Formats top-scored opportunities into an ASCII summary table, filtering out jobs you have already acted on.
-6. **Personal Tracking**: Built-in CLI tool to record application statuses (`new`, `shortlisted`, `applied`, `replied`, `rejected`) and personal notes.
+4. **Duplicate Detection**: Deduplicates passed remote listings sharing company and normalized title using SHA-256 exact matching and 5-gram Jaccard similarity, preserving a single canonical offer and saving LLM scoring tokens.
+5. **LLM Scoring**: Passed canonical listings are scored from 0 to 10 against the candidate's profile using LiteLLM (Google Gemini or another cloud provider), returning subscores, missing skill gaps, and a concise reason. **Scoring strictly prioritizes the freshest offers first** (ordered by collection timestamp descending).
+6. **Terminal Digest**: Formats top-scored opportunities into an ASCII summary table, listing duplicate URLs and filtering out jobs you have already acted on.
+7. **Personal Tracking**: Built-in CLI tool to record application statuses (`new`, `shortlisted`, `applied`, `replied`, `rejected`) and personal notes.
 
 ---
 
@@ -206,9 +212,10 @@ python -m agent.run
 
 | Command | Options | Purpose | Example |
 | :--- | :--- | :--- | :--- |
-| `agent.run` | `--limit <N>`<br>`--db <path>` | Runs collection, filter, scoring, and digest end-to-end. | `python -m agent.run --limit 10` |
+| `agent.run` | `--limit <N>`<br>`--db <path>` | Runs collection, filter, dedup, scoring, and digest end-to-end. | `python -m agent.run --limit 10` |
 | `agent.collect` | `[db_path]` | Fetches listings from all collectors into SQLite. | `python -m agent.collect` |
 | `agent.filter` | `[db_path]` | Applies rule-based filter to `new` listings. | `python -m agent.filter` |
+| `agent.dedup` | `[db_path]` | Deduplicates `passed` remote listings (hashing & 5-gram Jaccard) before scoring. | `python -m agent.dedup` |
 | `agent.score` | `--limit <N>` | Scores passed listings with configured LLM. | `python -m agent.score --limit 10` |
 | `agent.digest` | `--top <N>` | Displays top scored actionable opportunities in ASCII table. | `python -m agent.digest --top 15` |
 | `agent.track stats` | `--db <path>` | Prints counts of listings across all tracking statuses. | `python -m agent.track stats` |

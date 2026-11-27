@@ -84,10 +84,15 @@ def init_db(db_path: Path | str = DEFAULT_DB_PATH) -> None:
             "pipeline_status": "TEXT NOT NULL DEFAULT 'new'",
             "status_updated_at": "TEXT",
             "notes": "TEXT",
+            "duplicate_of": "TEXT",
+            "similarity_score": "REAL",
         }
         for col_name, col_type in new_columns.items():
             if col_name not in existing_cols:
                 cursor.execute(f"ALTER TABLE listings ADD COLUMN {col_name} {col_type}")
+
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_listings_duplicate_of ON listings(duplicate_of)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_listings_status ON listings(status)")
 
         conn.execute(
             """
@@ -727,6 +732,8 @@ def fetch_top_scored_listings(
             (limit,),
         )
         rows = cursor.fetchall()
+        canonical_ids = [r["id"] for r in rows]
+        dup_map = fetch_duplicate_urls_map(canonical_ids, db_path=db_path)
         results = []
         for r in rows:
             gaps_val = r["gaps"]
@@ -759,8 +766,110 @@ def fetch_top_scored_listings(
                 "scored_at": r["scored_at"] or "",
                 "pipeline_status": r["pipeline_status"] or "new",
                 "notes": r["notes"] or "",
+                "duplicate_urls": dup_map.get(r["id"], []),
             })
         return results
+
+
+def mark_listing_duplicate(
+    source: str,
+    id: str,
+    canonical_id: str,
+    similarity_score: float,
+    db_path: Path | str = DEFAULT_DB_PATH,
+) -> None:
+    """Mark a listing as duplicate of canonical_id, storing similarity score and rejection reason."""
+    init_db(db_path)
+    with get_db_connection(db_path) as conn:
+        conn.execute(
+            """
+            UPDATE listings
+            SET status = 'duplicate',
+                duplicate_of = ?,
+                similarity_score = ?,
+                rejection_reason = ?
+            WHERE source = ? AND id = ?
+            """,
+            (
+                canonical_id,
+                float(similarity_score),
+                f"duplicate of {canonical_id} (similarity: {similarity_score:.2f})",
+                source,
+                id,
+            ),
+        )
+        conn.commit()
+
+
+def fetch_duplicate_urls_for_canonical(
+    canonical_id: str, db_path: Path | str = DEFAULT_DB_PATH
+) -> list[str]:
+    """Fetch all URLs of listings marked as duplicates of canonical_id."""
+    init_db(db_path)
+    with get_db_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT url FROM listings
+            WHERE status = 'duplicate' AND duplicate_of = ? AND url IS NOT NULL AND url != ''
+            ORDER BY collected_at ASC
+            """,
+            (canonical_id,),
+        )
+        return [row["url"] for row in cursor.fetchall()]
+
+
+def fetch_duplicate_urls_map(
+    canonical_ids: list[str], db_path: Path | str = DEFAULT_DB_PATH
+) -> dict[str, list[str]]:
+    """Fetch duplicate URLs for a batch of canonical IDs."""
+    if not canonical_ids:
+        return {}
+    init_db(db_path)
+    placeholders = ",".join(["?"] * len(canonical_ids))
+    result: dict[str, list[str]] = {cid: [] for cid in canonical_ids}
+    with get_db_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            f"""
+            SELECT duplicate_of, url FROM listings
+            WHERE status = 'duplicate' AND duplicate_of IN ({placeholders})
+              AND url IS NOT NULL AND url != ''
+            ORDER BY collected_at ASC
+            """,
+            canonical_ids,
+        )
+        for row in cursor.fetchall():
+            c_id = row["duplicate_of"]
+            if c_id in result:
+                result[c_id].append(row["url"])
+    return result
+
+
+def fetch_dedup_candidates(
+    only_remote: bool = True, db_path: Path | str = DEFAULT_DB_PATH
+) -> list[dict[str, Any]]:
+    """
+    Fetch candidate 'passed' listings and target 'scored' listings for duplicate detection.
+    If only_remote is True, only listings with remote=1 are fetched.
+    """
+    init_db(db_path)
+    query = """
+        SELECT source, id, title, company, location, remote, work_type,
+               salary, description, url, posted_at, collected_at, status, score
+        FROM listings
+        WHERE status IN ('passed', 'scored')
+    """
+    params: list[Any] = []
+    if only_remote:
+        query += " AND remote = 1"
+    query += " ORDER BY posted_at ASC, collected_at ASC, id ASC"
+
+    with get_db_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(query, tuple(params))
+        return [dict(r) for r in cursor.fetchall()]
+
 
 
 def fetch_listings(

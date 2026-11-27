@@ -57,6 +57,12 @@ def format_listing_block(item: dict, index: Optional[int] = None) -> list[str]:
     if item.get("url"):
         lines.append(f"URL:       {item['url']}")
 
+    duplicate_urls = item.get("duplicate_urls") or []
+    if duplicate_urls:
+        lines.append(f"Also posted at ({len(duplicate_urls)} other URL{'s' if len(duplicate_urls) > 1 else ''}):")
+        for u in duplicate_urls:
+            lines.append(f"  - {u}")
+
     return lines
 
 
