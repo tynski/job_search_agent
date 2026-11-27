@@ -11,7 +11,7 @@
 - [ ] consider adding erecuiter
 
 ## Later
-- [ ] deploy solution to production, make it stand alone CLI
+- [ ] deploy solution to production, make it stand alone CLI, container?
 - [ ] mail or telegram digest
 
 ## Ideas (not decided)
