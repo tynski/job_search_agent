@@ -221,7 +221,7 @@ python -m agent.run
 | `agent.track stats` | `--db <path>` | Prints counts of listings across all tracking statuses. | `python -m agent.track stats` |
 | `agent.track find` | `query`<br>`--db <path>` | Searches listings by company, title, or ID snippet. | `python -m agent.track find cognitiva` |
 | `agent.track list` | `--status <status>`<br>`--limit <N>`<br>`--db <path>` | Lists tracked listings filtered by status (`new`, `shortlisted`, `applied`, `replied`, `rejected`). | `python -m agent.track list --status shortlisted` |
-| `agent.track set` | `id_or_query`<br>`status`<br>`--note "<note>"`<br>`--all`<br>`--db <path>` | Updates tracking status and note by exact ID or company/title query (use `--all` for multi-location duplicates). | `python -m agent.track set cognitiva applied --all --note "Sent CV"` |
+| `agent.track set` | `<listing_id> <status> [--note "..."]`<br>or<br>`--all <status> [--only-status <status>] [--note "..."] [--yes] [--dry-run]`<br>`--db <path>` | Updates pipeline tracking status for a single listing or across all listings in the current digest selection. | `python -m agent.track set --all shortlisted`<br>`python -m agent.track set job-123 applied --note "Sent CV"` |
 | `src.extract_profile` | *(none)* | Parses `data/resume.md` to `data/profile.yaml`. | `python -m src.extract_profile` |
 
 ### Offer Freshness & Incremental Runs

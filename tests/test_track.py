@@ -346,7 +346,7 @@ def test_find_and_smart_set_with_all_flag(tmp_path: Path, monkeypatch, capsys):
     assert "cog-lodz" in captured
     assert "cog-waw" in captured
 
-    # 5. CLI set multiple without --all shows warning and exits 1
+    # 5. CLI set multiple shows warning and exits 1
     monkeypatch.setattr(
         "sys.argv",
         ["track", "--db", str(db_file), "set", "cognitiva", "shortlisted"],
@@ -356,13 +356,163 @@ def test_find_and_smart_set_with_all_flag(tmp_path: Path, monkeypatch, capsys):
     assert exc.value.code == 1
     out = capsys.readouterr().out
     assert "Found 2 listings matching 'cognitiva'" in out
-    assert "re-run with --all" in out
+    assert "use its exact ID" in out
 
-    # 6. CLI set with --all succeeds
+
+def test_cli_track_set_mutual_exclusion(tmp_path: Path, monkeypatch, capsys):
+    db_file = tmp_path / "cli_mutex.db"
+    init_db(db_file)
+
+    # 1. Both --all and listing_id
     monkeypatch.setattr(
         "sys.argv",
-        ["track", "--db", str(db_file), "set", "cognitiva", "shortlisted", "--all", "--note", "Shortlisted all"],
+        ["track", "--db", str(db_file), "set", "--all", "item-1", "shortlisted"],
+    )
+    with pytest.raises(SystemExit) as exc:
+        track_main()
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert "--all is mutually exclusive with <listing_id>" in out
+    assert "Usage:" in out
+
+    # 2. Neither --all nor listing_id
+    monkeypatch.setattr(
+        "sys.argv",
+        ["track", "--db", str(db_file), "set"],
+    )
+    with pytest.raises(SystemExit) as exc:
+        track_main()
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert "Must specify either <listing_id> <status> or --all <status>" in out
+    assert "Usage:" in out
+
+    # 3. --all with no status
+    monkeypatch.setattr(
+        "sys.argv",
+        ["track", "--db", str(db_file), "set", "--all"],
+    )
+    with pytest.raises(SystemExit) as exc:
+        track_main()
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert "Missing <status> for --all" in out
+
+
+def test_cli_track_set_all_dry_run_and_confirmation(tmp_path: Path, monkeypatch, capsys):
+    db_file = tmp_path / "cli_all_test.db"
+    init_db(db_file)
+
+    # Seed two scored listings in the digest selection
+    l1 = _create_sample_listing("d1", "Senior Python Dev")
+    l2 = _create_sample_listing("d2", "AI Solutions Engineer")
+    save_listings([l1, l2], db_path=db_file)
+    save_score(
+        source="test_src", id="d1",
+        score_data={"score": 9.0, "skills_match": 9.0, "experience_fit": 9.0, "role_fit": 9.0, "gaps": [], "reason": "fit"},
+        db_path=db_file,
+    )
+    save_score(
+        source="test_src", id="d2",
+        score_data={"score": 8.5, "skills_match": 8.5, "experience_fit": 8.5, "role_fit": 8.5, "gaps": [], "reason": "fit"},
+        db_path=db_file,
+    )
+
+    # 1. Dry run
+    monkeypatch.setattr(
+        "sys.argv",
+        ["track", "--db", str(db_file), "set", "--all", "shortlisted", "--dry-run"],
     )
     track_main()
     out = capsys.readouterr().out
-    assert "Successfully updated 2 listings matching 'cognitiva' -> status: 'shortlisted'" in out
+    assert "[Dry run] 2 listing(s) in digest selection would be updated to status 'shortlisted'" in out
+    assert "d1" in out
+    assert "d2" in out
+
+    # Verify database unchanged
+    stats = get_pipeline_stats(db_path=db_file)
+    assert stats["shortlisted"] == 0
+    assert stats["new"] == 2
+
+    # 2. Confirmation declined (user inputs 'n')
+    monkeypatch.setattr(
+        "sys.argv",
+        ["track", "--db", str(db_file), "set", "--all", "shortlisted"],
+    )
+    monkeypatch.setattr("builtins.input", lambda _: "n")
+    track_main()
+    out = capsys.readouterr().out
+    assert "This will update 2 listing(s)" in out
+    assert "Aborted." in out
+
+    # Verify database still unchanged
+    stats = get_pipeline_stats(db_path=db_file)
+    assert stats["shortlisted"] == 0
+
+    # 3. Confirmation accepted (user inputs 'y')
+    monkeypatch.setattr(
+        "sys.argv",
+        ["track", "--db", str(db_file), "set", "--all", "shortlisted"],
+    )
+    monkeypatch.setattr("builtins.input", lambda _: "y")
+    track_main()
+    out = capsys.readouterr().out
+    assert "Successfully updated 2 listing(s) -> status: 'shortlisted'" in out
+
+    # Verify database updated
+    stats = get_pipeline_stats(db_path=db_file)
+    assert stats["shortlisted"] == 2
+
+
+def test_cli_track_set_all_with_yes_and_only_status(tmp_path: Path, monkeypatch, capsys):
+    db_file = tmp_path / "cli_yes_test.db"
+    init_db(db_file)
+
+    l1 = _create_sample_listing("d1", "Python Lead")
+    l2 = _create_sample_listing("d2", "AI Architect")
+    save_listings([l1, l2], db_path=db_file)
+    save_score(
+        source="test_src", id="d1",
+        score_data={"score": 9.0, "skills_match": 9.0, "experience_fit": 9.0, "role_fit": 9.0, "gaps": [], "reason": "fit"},
+        db_path=db_file,
+    )
+    save_score(
+        source="test_src", id="d2",
+        score_data={"score": 8.0, "skills_match": 8.0, "experience_fit": 8.0, "role_fit": 8.0, "gaps": [], "reason": "fit"},
+        db_path=db_file,
+    )
+
+    # Set d1 to 'shortlisted', d2 remains 'new'
+    set_pipeline_status("d1", "shortlisted", db_path=db_file)
+
+    # Use --all with --only-status shortlisted to transition only d1 to applied
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "track",
+            "--db",
+            str(db_file),
+            "set",
+            "--all",
+            "applied",
+            "--only-status",
+            "shortlisted",
+            "--note",
+            "Auto applied to shortlisted",
+            "--yes",
+        ],
+    )
+    track_main()
+    out = capsys.readouterr().out
+    assert "Successfully updated 1 listing(s) -> status: 'applied'" in out
+    assert "(note: 'Auto applied to shortlisted')" in out
+
+    # Verify d1 is applied, d2 is still new
+    stats = get_pipeline_stats(db_path=db_file)
+    assert stats["applied"] == 1
+    assert stats["new"] == 1
+
+    applied_items = fetch_tracked_listings(status="applied", db_path=db_file)
+    assert applied_items[0]["id"] == "d1"
+    assert applied_items[0]["notes"] == "Auto applied to shortlisted"
+

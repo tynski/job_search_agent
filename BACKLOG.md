@@ -2,7 +2,6 @@
 
 ## Now
 - [ ] CLI does not have help, what are the flags?
-- [ ] --all flag for agent.track set should be just after set
 - [ ] garbage collection - delete records older than 30 days
 
 ## Next
@@ -20,6 +19,7 @@
 - simple UI
 
 ## Done
+- [x] --all flag for agent.track set placed directly after set, targeting digest selection with safety confirmations
 - [x] Deduplicate remote listings with near-identical descriptions across sources before LLM scoring
 - [x] Add README.md, describe how to use agent
 - [x] make match easier to identify and write in CLI - maybe id or short name?
